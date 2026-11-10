@@ -11,6 +11,8 @@ copy on *your* calendar. The other copies are hidden and your copy fills their s
 
 It also adds **drag to edit** in the day and week views:
 - Drag an event's **top edge** to change its start time, just like dragging the bottom edge changes its end time.
+- Hold **Alt** (**Option** on a Mac) while dragging to move in **5-minute steps** instead of 15. Press or release
+  Alt at any point during the drag to switch between the two.
 
 Drag to edit needs a one-time Google Cloud setup; see [Drag to edit](#drag-to-edit) below.
 
@@ -49,20 +51,21 @@ Run `git pull` in the folder, or download the ZIP again and replace the folder's
 | **Hide events not on my calendar** | Shown in *My calendar only* mode. Also hides events that don't appear on your calendar at all. When off, only duplicates are collapsed. |
 | **Style** | Shown in *Merge* mode. Sets the gradient style for merged events. |
 | **Wildcard** | Events whose title contains this word (e.g. `busy`) are matched with any other event at the same time. Use `\|` to give several words. This setting works in both modes. |
-| **Drag to edit** | Turns on top-edge dragging. It works independently of **Enable**, and only takes effect once an API client ID is set. |
+| **Drag to edit** | Turns on top-edge dragging and Alt for 5-minute steps. It works independently of **Enable**, and only takes effect once an API client ID is set. |
 | **API client ID** | The OAuth client ID from your Google Cloud project. See [Drag to edit](#drag-to-edit). |
 | **Google account → Connect** | Signs in to Google so the extension can save your changes. If you skip this, you're asked to sign in on your first drag. |
 
 ## Drag to edit
 
-Google Calendar's own drag code has no handle for the start time. So when this
+Google Calendar's own drag code only snaps to 15 minutes and has no handle for the start time. So when this
 feature is on, the extension runs the whole drag itself: moving an event, dragging its top edge and dragging its
 bottom edge. It then saves the new time through the
 [Google Calendar API](https://developers.google.com/calendar/api). Clicking an event without dragging still opens
 it as usual.
 
 How it behaves:
-- Times snap to the 15-minute grid, as in Google Calendar. The preview shows the new time while you drag.
+- Times snap to the 15-minute grid, or to the 5-minute grid while Alt is held. The preview shows the new time
+  while you drag, with "5 min" added when Alt is held.
 - Press **Esc** while dragging to cancel.
 - Moving an event works across days in the week view. Dragging near the top or bottom of the grid scrolls it.
 - If the event has guests, you're asked whether to send them update emails, just as Google does.
@@ -106,6 +109,8 @@ browser.
   **Setup help**. Copy it again exactly, including the trailing `/`.
 - **The event jumps back after saving.** Google Calendar sometimes takes a moment to show changes made through
   the API. If it hasn't updated after about 30 seconds, a **Reload** button appears.
+- **Alt+drag moves the browser window (Linux).** Some Linux desktops use Alt+drag to move windows. Change that
+  shortcut in your desktop settings, or use the Super key for window moves.
 
 ## How "my calendar" is detected
 

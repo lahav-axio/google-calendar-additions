@@ -1,8 +1,10 @@
 // Drag-to-edit for timed events in Google Calendar's day/week views (added in this fork)
 //
 // - Drag an event's TOP edge to change its start time (Google only lets you drag the bottom edge).
+// - Hold Alt (Option on a Mac) while dragging to move in 5-minute steps instead of 15.
+//   Press or release Alt at any point during the drag to switch between the two.
 //
-// Google Calendar's own drag code has no start-time handle, so while
+// Google Calendar's own drag code only snaps to 15 minutes and has no start-time handle, so while
 // this feature is on the extension runs the whole drag itself (move, top edge, bottom edge) and
 // saves the result through the Google Calendar API (see background.js). Clicks without a drag are
 // handed back to Google untouched, so opening an event still works as before.
@@ -14,6 +16,7 @@
     "use strict"
 
     const STEP = 15 // minutes, like Google Calendar
+    const FINE_STEP = 5 // minutes, while Alt is held
     const DRAG_THRESHOLD = 4 // px of movement before a press becomes a drag
     const MIN_COLUMN_HEIGHT = 300 // px; day/week time-grid columns are much taller than month cells
     const PIN_TIMEOUT = 30000 // ms to wait for Google Calendar to redraw a saved event
@@ -228,6 +231,7 @@
                 box-shadow: 0 6px 10px rgba(0,0,0,.14), 0 1px 18px rgba(0,0,0,.12), 0 3px 5px rgba(0,0,0,.2);
             }
             .calmerge-ghost .calmerge-ghost-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .calmerge-ghost .calmerge-ghost-step { opacity: .8; font-weight: 400; }
             .calmerge-toast {
                 position: fixed; left: 24px; bottom: 24px; z-index: 2147483001; display: flex; gap: 16px;
                 align-items: center; max-width: 520px; padding: 14px 16px; border-radius: 4px;
@@ -357,6 +361,7 @@
     let press = null // pointer is down on an event; becomes a drag once it moves
     let swallowUntilUp = false // after Esc: eat the rest of this press so Google doesn't see a click
     let suppressClickUntil = 0
+    let swallowAltKeyUp = false
     let hovered = null
     const pinned = new Set()
 
@@ -416,6 +421,7 @@
             bottomInCol: boxRect.bottom - colRect.top,
             leftFrac: (boxRect.left - colRect.left) / colRect.width,
             widthFrac: boxRect.width / colRect.width,
+            alt: e.altKey,
             lastX: e.clientX,
             lastY: e.clientY,
             dragging: false
@@ -496,7 +502,7 @@
 
     // New start/end for the current pointer position
     const computeTimes = (p, { minutes, days }) => {
-        const step = STEP
+        const step = p.alt ? FINE_STEP : STEP
         const { event, tz } = p.data
         const s0 = new Date(event.start.dateTime)
         const e0 = new Date(event.end.dateTime)
@@ -522,7 +528,7 @@
         const p = press
         if (!p || !p.dragging) return
         const move = rawMovement(p)
-        const step = STEP
+        const step = p.alt ? FINE_STEP : STEP
         let dStart = 0
         let dEnd = 0
         let label = ""
@@ -547,6 +553,12 @@
             widthFrac: p.widthFrac
         }
         p.ghost.time.textContent = label
+        if (p.alt) {
+            const hint = document.createElement("span")
+            hint.className = "calmerge-ghost-step"
+            hint.textContent = `${label ? " · " : ""}5 min`
+            p.ghost.time.appendChild(hint)
+        }
         placeGhost(p.ghost)
     }
 
@@ -708,6 +720,10 @@
             if (Math.hypot(e.clientX - press.startX, e.clientY - press.startY) < DRAG_THRESHOLD) return
             startDrag()
         }
+        if (press.alt !== e.altKey) {
+            press.alt = e.altKey
+            if (e.altKey) swallowAltKeyUp = true
+        }
         e.stopImmediatePropagation()
         render()
     })
@@ -767,6 +783,26 @@
             e.stopImmediatePropagation()
             e.preventDefault()
             cancelDrag()
+        } else if (e.key === "Alt") {
+            // Stops Windows from moving focus to the browser menu when Alt is released
+            e.preventDefault()
+            swallowAltKeyUp = true
+            if (!press.alt) {
+                press.alt = true
+                render()
+            }
+        }
+    })
+
+    on("keyup", e => {
+        if (e.key !== "Alt") return
+        if (swallowAltKeyUp) {
+            e.preventDefault()
+            if (!press) swallowAltKeyUp = false
+        }
+        if (press && press.dragging && press.alt) {
+            press.alt = false
+            render()
         }
     })
 
