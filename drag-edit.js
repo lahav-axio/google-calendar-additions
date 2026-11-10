@@ -4,6 +4,9 @@
 // - Hold Alt (Option on a Mac) while dragging to move in 5-minute steps instead of 15.
 //   Press or release Alt at any point during the drag to switch between the two.
 // - Hold Shift while dragging to move in 30-minute steps (Alt wins if both are held).
+// - Start a drag on empty space with Alt or Shift held to create an event in 5- or 30-minute
+//   steps; on release Google's full event editor opens with those times filled in. (Plain drags
+//   on empty space are left to Google, so normal event creation is unchanged.)
 //
 // Google Calendar's own drag code only snaps to 15 minutes and has no start-time handle, so while
 // this feature is on the extension runs the whole drag itself (move, top edge, bottom edge) and
@@ -353,6 +356,13 @@
             html.calmerge-dragging-ns, html.calmerge-dragging-ns * { cursor: ns-resize !important; }
             html.calmerge-dragging-move, html.calmerge-dragging-move * { cursor: grabbing !important; }
             html.calmerge-dragging, html.calmerge-dragging * { user-select: none !important; }
+            .calmerge-create-ghost {
+                position: fixed; z-index: 2147483000; pointer-events: none; box-sizing: border-box;
+                border-radius: 4px; padding: 2px 8px; overflow: hidden;
+                background: rgb(3, 155, 229); color: #fff; font: 12px/16px "Google Sans", Roboto, Arial, sans-serif;
+                box-shadow: 0 6px 10px rgba(0,0,0,.14), 0 1px 18px rgba(0,0,0,.12), 0 3px 5px rgba(0,0,0,.2);
+            }
+            .calmerge-create-ghost div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .calmerge-toast {
                 position: fixed; left: 24px; bottom: 24px; z-index: 2147483001; display: flex; gap: 16px;
                 align-items: center; max-width: 520px; padding: 14px 16px; border-radius: 4px;
@@ -465,8 +475,8 @@
 
     // Put the event back exactly as Google drew it
     const restorePreview = p => {
-        const box = p.found.box
         if (!p.savedStyle) return
+        const box = p.found.box
         if (box.isConnected) PREVIEW_STYLES.forEach(k => (box.style[k] = p.savedStyle[k]))
         restoreTimes(p.timeTexts || [])
     }
@@ -523,45 +533,32 @@
 
     let warnedStale = false
 
-    const beginPress = e => {
-        if (e.button !== 0 || e.ctrlKey || e.metaKey || !isEnabled()) return false
-        if (!extensionAlive()) {
-            if (!warnedStale && findTimedEventAt(e)) {
-                warnedStale = true
-                toast(STALE_MESSAGE, { label: "Reload", run: () => window.location.reload() })
-            }
-            return false
-        }
-        const found = findTimedEventAt(e)
-        if (!found) {
-            debug("no timed event under the pointer", e.target)
-            return false
-        }
-        const colRect = found.column.getBoundingClientRect()
-        const kind = zoneFor(found, e)
-        debug("press", kind, found.eventId, found.calendarId, e.target)
-        press = {
-            found,
-            kind,
+    // What's needed to hand a press back to Google unchanged
+    const downInitFrom = e => ({
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        screenX: e.screenX,
+        screenY: e.screenY,
+        button: e.button,
+        buttons: e.buttons,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        pointerId: e.pointerId,
+        pointerType: e.pointerType,
+        isPrimary: e.isPrimary
+    })
+
+    const pressBase = (e, column) => {
+        const colRect = column.getBoundingClientRect()
+        if (e.altKey) swallowAltKeyUp = true // releasing it later mustn't focus the browser menu (Windows)
+        return {
             target: e.target,
             pointerId: e.pointerId,
-            downInit: {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window,
-                clientX: e.clientX,
-                clientY: e.clientY,
-                screenX: e.screenX,
-                screenY: e.screenY,
-                button: e.button,
-                buttons: e.buttons,
-                altKey: e.altKey,
-                shiftKey: e.shiftKey,
-                pointerId: e.pointerId,
-                pointerType: e.pointerType,
-                isPrimary: e.isPrimary
-            },
+            downInit: downInitFrom(e),
             startX: e.clientX,
             startY: e.clientY,
             startYInCol: e.clientY - colRect.top,
@@ -572,7 +569,115 @@
             lastY: e.clientY,
             dragging: false
         }
+    }
+
+    const beginPress = e => {
+        if (e.button !== 0 || e.ctrlKey || e.metaKey || settings.dragEdit === false) return false
+        const found = findTimedEventAt(e)
+        if (!found) return beginCreatePress(e)
+        if (!isEnabled()) return false
+        if (!extensionAlive()) {
+            if (!warnedStale) {
+                warnedStale = true
+                toast(STALE_MESSAGE, { label: "Reload", run: () => window.location.reload() })
+            }
+            return false
+        }
+        const kind = zoneFor(found, e)
+        debug("press", kind, found.eventId, found.calendarId, e.target)
+        press = { found, kind, ...pressBase(e, found.column) }
         return true
+    }
+
+    // ---- creating an event: Alt/Shift + drag on empty space -------------------------------------
+
+    const columnAt = e => {
+        for (const el of document.elementsFromPoint(e.clientX, e.clientY)) {
+            const column = el.closest && el.closest('[role="gridcell"]')
+            if (column && column.getBoundingClientRect().height >= MIN_COLUMN_HEIGHT) return column
+        }
+        return null
+    }
+
+    // Only with Alt or Shift held at the start: plain drags on empty space stay Google's own
+    const beginCreatePress = e => {
+        if (!(e.altKey || e.shiftKey) || !extensionAlive()) return false
+        if (e.target instanceof Element && e.target.closest('[data-eventid], [role="dialog"]')) return false
+        const column = columnAt(e)
+        if (!column) return false
+        const date = columnDate(column)
+        if (date === null) {
+            debug("can't tell this column's date (no data-datekey)", column)
+            return false
+        }
+        debug("create press", new Date(date).toISOString().slice(0, 10))
+        press = { kind: "create", column, date, ...pressBase(e, column) }
+        return true
+    }
+
+    // Minutes after midnight covered by the new event: from the slot where the drag started to the
+    // slot under the pointer, in either direction, at least one step long (like Google)
+    const createRange = p => {
+        const step = stepFor(p)
+        const colTop = p.column.getBoundingClientRect().top
+        const a = p.startYInCol / p.pxPerMin
+        const b = (p.lastY - colTop) / p.pxPerMin
+        const start = Math.floor(clamp(Math.min(a, b), 0, 24 * 60 - step) / step) * step
+        let end = Math.ceil(clamp(Math.max(a, b), 0, 24 * 60) / step) * step
+        if (end - start < step) end = start + step
+        return { start, end: Math.min(end, 24 * 60) }
+    }
+
+    // Write the times like the event chips on the page do (e.g. "10:05 – 11:20am" or "10:05 – 11:20")
+    const timeSample = () => {
+        for (const el of document.querySelectorAll('[data-eventid] [aria-hidden="true"]')) {
+            const m = el.textContent.match(RANGE_RE)
+            if (m && looksLikeTime(m[1] + m[3])) return m
+        }
+        const twelveHour = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions().hour12
+        return (twelveHour ? "9 – 10am" : "09:00 – 10:00").match(RANGE_RE)
+    }
+
+    const startCreateDrag = p => {
+        const ghost = document.createElement("div")
+        ghost.className = "calmerge-create-ghost"
+        const title = document.createElement("div")
+        title.textContent = "(No title)"
+        const time = document.createElement("div")
+        ghost.append(title, time)
+        document.body.appendChild(ghost)
+        p.ghost = ghost
+        p.ghostTime = time
+        p.sample = timeSample()
+    }
+
+    const renderCreate = p => {
+        const { start, end } = createRange(p)
+        const col = p.column.getBoundingClientRect()
+        p.ghost.style.top = `${col.top + start * p.pxPerMin}px`
+        p.ghost.style.height = `${Math.max((end - start) * p.pxPerMin - 1, 8)}px`
+        p.ghost.style.left = `${col.left}px`
+        p.ghost.style.width = `${Math.max(col.width - 10, 24)}px`
+        // The column's date at midnight UTC plus the minutes, read back in UTC = the wall-clock time
+        p.ghostTime.textContent = rewriteRange(p.sample, new Date(p.date + start * MINUTE), new Date(p.date + end * MINUTE), "UTC")
+    }
+
+    // Google's full event editor, with the dates filled in (wall-clock times in the calendar's zone)
+    const eventEditUrl = (date, start, end) => {
+        const stamp = minutes => {
+            const d = new Date(date + minutes * MINUTE)
+            return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00`
+        }
+        const base = (window.location.pathname.match(/^\/calendar\/u\/\d+/) || ["/calendar"])[0]
+        return `${window.location.origin}${base}/r/eventedit?dates=${stamp(start)}/${stamp(end)}`
+    }
+
+    const finishCreate = p => {
+        const { start, end } = createRange(p)
+        renderCreate(p)
+        const url = eventEditUrl(p.date, start, end)
+        debug("create", url)
+        window.location.assign(url)
     }
 
     // Google never saw the press, so give it the press now and let the real release through
@@ -585,12 +690,41 @@
         target.dispatchEvent(new MouseEvent("mousedown", downInit))
     }
 
+    // Scroll the grid while the pointer is near its top or bottom edge
+    const startAutoScroll = p => {
+        p.scroller = findScroller(p.column || p.found.column)
+        if (!p.scroller) return
+        const tick = () => {
+            if (press !== p || !p.dragging) return
+            const r = p.scroller.getBoundingClientRect()
+            const edge = 40
+            let speed = 0
+            if (p.lastY < r.top + edge) speed = -Math.ceil((r.top + edge - p.lastY) / 4)
+            else if (p.lastY > r.bottom - edge) speed = Math.ceil((p.lastY - (r.bottom - edge)) / 4)
+            if (speed) {
+                p.scroller.scrollTop += clamp(speed, -20, 20)
+                render()
+            }
+            p.raf = requestAnimationFrame(tick)
+        }
+        p.raf = requestAnimationFrame(tick)
+    }
+
     const startDrag = () => {
         const p = press
         p.dragging = true
+        if (p.kind === "create") {
+            injectStyles()
+            document.documentElement.classList.add("calmerge-dragging", "calmerge-dragging-ns")
+            try {
+                p.target.setPointerCapture(p.pointerId)
+            } catch (err) {}
+            startCreateDrag(p)
+            startAutoScroll(p)
+            return
+        }
         p.columns = p.kind === "move" ? findColumns(p.found.column) : [p.found.column]
         if (!p.columns.includes(p.found.column)) p.columns.push(p.found.column)
-        p.scroller = findScroller(p.found.column)
         startPreview(p)
         document.documentElement.classList.add("calmerge-dragging", p.kind === "move" ? "calmerge-dragging-move" : "calmerge-dragging-ns")
         injectStyles()
@@ -606,22 +740,7 @@
         p.dataPromise.then(() => press === p && render(), () => {})
         p.dataPromise.catch(() => {}) // errors are reported when the drag ends
 
-        if (p.scroller) {
-            const tick = () => {
-                if (press !== p || !p.dragging) return
-                const r = p.scroller.getBoundingClientRect()
-                const edge = 40
-                let speed = 0
-                if (p.lastY < r.top + edge) speed = -Math.ceil((r.top + edge - p.lastY) / 4)
-                else if (p.lastY > r.bottom - edge) speed = Math.ceil((p.lastY - (r.bottom - edge)) / 4)
-                if (speed) {
-                    p.scroller.scrollTop += clamp(speed, -20, 20)
-                    render()
-                }
-                p.raf = requestAnimationFrame(tick)
-            }
-            p.raf = requestAnimationFrame(tick)
-        }
+        startAutoScroll(p)
     }
 
     // Where the pointer has dragged things, in minutes and days, before snapping
@@ -674,6 +793,7 @@
     const render = () => {
         const p = press
         if (!p || !p.dragging) return
+        if (p.kind === "create") return renderCreate(p)
         const move = rawMovement(p)
         const step = stepFor(p)
         let dStart = 0
@@ -709,6 +829,7 @@
         if (p.dragging) {
             endDragVisuals(p)
             restorePreview(p)
+            if (p.ghost) p.ghost.remove()
             swallowUntilUp = true
         }
     }
@@ -724,6 +845,7 @@
         const p = press
         press = null
         endDragVisuals(p)
+        if (p.kind === "create") return finishCreate(p)
         try {
             await p.dataPromise
             const { event, tz } = p.data
@@ -876,7 +998,7 @@
 
     on("pointercancel", () => cancelDrag())
     window.addEventListener("blur", () => {
-        const waitingForEvent = press && press.dragging && !press.data
+        const waitingForEvent = press && press.dragging && press.kind !== "create" && !press.data
         cancelDrag()
         // Most likely the Google sign-in window opened and took focus
         if (waitingForEvent) toast("Drag cancelled. If a Google sign-in window opened, finish signing in, then drag again.")

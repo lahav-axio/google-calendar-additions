@@ -19,8 +19,11 @@ features.
 - Hold **Alt** (**Option** on a Mac) while dragging to move in **5-minute steps** instead of 15. Press or release
   Alt at any point during the drag to switch between the two.
 - Hold **Shift** while dragging to move in **30-minute steps**. Like Alt, it can be pressed or released mid-drag.
+- **Create events** in 5- or 30-minute steps: hold **Alt** or **Shift** and drag on an empty part of the grid. When
+  you let go, Google's full event editor opens with the start and end times filled in.
 
-Drag to edit needs a one-time Google Cloud setup; see [Drag to edit](#drag-to-edit) below.
+Changing existing events needs a one-time Google Cloud setup; see [Drag to edit](#drag-to-edit) below. Creating
+events with Alt or Shift works without it.
 
 The two groups of features have separate switches, so you can use either one on its own.
 
@@ -70,7 +73,7 @@ The popup has two sections.
 
 | Setting | What it does |
 |---|---|
-| **Enable** | Turns on drag to edit. It only takes effect once an API client ID is set. |
+| **Enable** | Turns on drag to edit. Changing existing events also needs an API client ID; creating events with Alt or Shift works without one. |
 | **API client ID** | The OAuth client ID from your Google Cloud project. See [Drag to edit](#drag-to-edit). |
 | **Google account → Connect** | Signs in to Google so the extension can save your changes. If you skip this, you're asked to sign in on your first drag. |
 
@@ -94,6 +97,16 @@ How it behaves:
 - Changing one occurrence of a repeating event changes only that occurrence.
 - All-day events, events that run past midnight, and the month view still use Google's own dragging, or show
   a message.
+
+Creating an event:
+- Hold **Alt** or **Shift**, then start dragging on an empty part of the day or week grid. A *(No title)* preview
+  follows the pointer, snapping to 5 or 30 minutes. You can drag up or down, and press or release Alt and Shift
+  mid-drag to change the step.
+- When you let go, Google's full event editor opens with the start and end times filled in. Add a title and any
+  other details there, then click **Save**. Google saves the event itself, so it appears right away.
+- Press **Esc** while dragging to cancel. Alt- or Shift-clicking without dragging works as a normal click.
+- Dragging on empty space *without* Alt or Shift is left to Google, so its usual quick-create popup appears. Hold
+  Alt or Shift before you start: pressing them partway through a plain drag doesn't switch the step.
 
 ### One-time setup (about 5 minutes)
 
