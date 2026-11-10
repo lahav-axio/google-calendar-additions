@@ -83,7 +83,7 @@ window.onload = function () {
 
     const showConnection = s => {
         const status = document.getElementById('connect_status')
-        if (!s.oauthClientId) status.textContent = 'Creating events with Alt/Shift works now. To change existing events by dragging, paste your API client ID.'
+        if (!s.oauthClientId) status.textContent = 'Paste your API client ID to turn this on. Until then only Alt/Shift drags on empty space are handled (they open Google\'s full editor).'
         else if (s.connectedAccount) status.textContent = `Connected as ${s.connectedAccount}.`
         else status.textContent = 'Not connected yet. Click Connect, or you\'ll be asked to sign in on your first drag.'
     }

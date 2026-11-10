@@ -16,11 +16,10 @@ A Chrome extension that adds extra features to Google Calendar.
 - Hold **Alt** (**Option** on a Mac) while dragging to move in **5-minute steps** instead of 15. Press or release
   Alt at any point during the drag to switch between the two.
 - Hold **Shift** while dragging to move in **30-minute steps**. Like Alt, it can be pressed or released mid-drag.
-- **Create events** in 5- or 30-minute steps: hold **Alt** or **Shift** and drag on an empty part of the grid. When
-  you let go, Google's full event editor opens with the start and end times filled in.
+- **Create events** by dragging on an empty part of the grid, with Alt or Shift for 5- or 30-minute steps. A popup
+  like Google's asks for the title.
 
-Changing existing events needs a one-time Google Cloud setup; see [Drag to edit](#drag-to-edit) below. Creating
-events with Alt or Shift works without it.
+Drag to edit needs a one-time Google Cloud setup; see [Drag to edit](#drag-to-edit) below.
 
 The two groups of features have separate switches, so you can use either one on its own.
 
@@ -70,7 +69,7 @@ The popup has two sections.
 
 | Setting | What it does |
 |---|---|
-| **Enable** | Turns on drag to edit. Changing existing events also needs an API client ID; creating events with Alt or Shift works without one. |
+| **Enable** | Turns on drag to edit. It takes full effect once an API client ID is set; without one, only Alt/Shift drags on empty space are handled (they open Google's full editor). |
 | **API client ID** | The OAuth client ID from your Google Cloud project. See [Drag to edit](#drag-to-edit). |
 | **Google account → Connect** | Signs in to Google so the extension can save your changes. If you skip this, you're asked to sign in on your first drag. |
 
@@ -96,14 +95,19 @@ How it behaves:
   a message.
 
 Creating an event:
-- Hold **Alt** or **Shift**, then start dragging on an empty part of the day or week grid. A *(No title)* preview
-  follows the pointer, snapping to 5 or 30 minutes. You can drag up or down, and press or release Alt and Shift
-  mid-drag to change the step.
-- When you let go, Google's full event editor opens with the start and end times filled in. Add a title and any
-  other details there, then click **Save**. Google saves the event itself, so it appears right away.
-- Press **Esc** while dragging to cancel. Alt- or Shift-clicking without dragging works as a normal click.
-- Dragging on empty space *without* Alt or Shift is left to Google, so its usual quick-create popup appears. Hold
-  Alt or Shift before you start: pressing them partway through a plain drag doesn't switch the step.
+- Drag on an empty part of the day or week grid. A *(No title)* preview follows the pointer. Hold **Alt** or
+  **Shift** for 5- or 30-minute steps. You can press or release them at any point, before or after you start
+  dragging. You can also drag upwards.
+- When you let go, a popup like Google's opens next to the preview. Type a title and press **Enter** or click
+  **Save**, and the event is created on your primary calendar. A message with an **Undo** button appears.
+  **More options** opens Google's full event editor with the title and times filled in, for guests, Meet, another
+  calendar and so on.
+- The preview stays where you dropped it until Google Calendar draws the new event, so it never disappears or shows
+  twice.
+- Press **Esc** or click outside the popup to discard it. Press **Esc** while dragging to cancel. A plain click
+  on empty space still opens Google's own quick-create popup, as before.
+- Without an API client ID the extension can't save, so plain drags on empty space are left to Google. Drags
+  started with Alt or Shift held open Google's full event editor with the times filled in instead.
 
 ### One-time setup (about 5 minutes)
 

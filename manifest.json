@@ -3,7 +3,7 @@
     "description": "__MSG_appDesc__",
     "default_locale": "en",
     "homepage_url": "https://github.com/lahav-axio/google-calendar-additions",
-    "version": "2.8.1",
+    "version": "2.9.0",
     "content_scripts": [
         {
             "matches": ["https://www.google.com/calendar/*", "https://calendar.google.com/calendar/*"],
