@@ -6,8 +6,8 @@
 // - Hold Shift while dragging to move in 30-minute steps (Alt wins if both are held).
 // - Drag on empty space to create an event; Alt/Shift (pressed before or during the drag) give
 //   5- or 30-minute steps. On release the drag is handed to Google (rounded to its 15-minute
-//   steps) so Google's own quick-create popup opens. After the user saves there, the new event is
-//   set to the exact times through the API (needs the API client id).
+//   steps) so Google's own quick-create popup opens, and the exact times are filled into it. If
+//   that fails, the new event is set to the exact times through the API once it's saved.
 //
 // Google Calendar's own drag code only snaps to 15 minutes and has no start-time handle, so while
 // this feature is on the extension runs the whole drag itself (move, top edge, bottom edge) and
@@ -744,6 +744,156 @@
     const isGoogleDialog = el =>
         !el.closest(".calmerge-ui") && el.getClientRects().length > 0 && !!el.querySelector("input, [role='button']")
 
+    // ---- filling the exact times into Google's popup ---------------------------------------------
+    // Google's popup isn't documented and changes, so nothing here depends on its labels or
+    // structure: fields and buttons are found by the times they show (the 15-minute times Google
+    // was given), and every step is checked before the next.
+
+    // "4:30pm", "4:30 PM", "16:30", "4pm" -> minutes after midnight (null if not a time)
+    const parseClock = text => {
+        const m = String(text || "").trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(?:([ap])\.?\s?m\.?)?$/i)
+        if (!m || (!m[2] && !m[3])) return null
+        let h = Number(m[1]) % 24
+        if (m[3]) h = (h % 12) + (/p/i.test(m[3]) ? 12 : 0)
+        return h * 60 + Number(m[2] || 0)
+    }
+
+    // All "a – b" time ranges in a text, as [start, end] minutes ("4 – 7:15pm" -> 16:00 – 19:15)
+    const rangesIn = text => {
+        const out = []
+        const re = new RegExp(RANGE_RE.source, "gi")
+        for (let m; (m = re.exec(text)); ) {
+            const suffix = (m[3].match(SUFFIX_RE) || [""])[0]
+            const a = parseClock(SUFFIX_RE.test(m[1]) || !suffix ? m[1] : m[1] + suffix)
+            const b = parseClock(m[3])
+            if (a !== null && b !== null) out.push([a, b])
+        }
+        return out
+    }
+
+    const visible = el => el.getClientRects().length > 0
+    const inOurUi = el => !!el.closest(".calmerge-ui")
+
+    // Text fields (in the popup, or in a layer it opened) currently showing the given time
+    const inputsShowing = (dialog, minutes) =>
+        Array.from(document.querySelectorAll("input"))
+            .filter(i => visible(i) && !inOurUi(i) && parseClock(i.value) === minutes)
+            .sort((a, b) => (dialog.contains(b) ? 1 : 0) - (dialog.contains(a) ? 1 : 0))
+
+    // The innermost elements in the popup whose text is the given time, or a range containing it
+    // (innermost, so a click lands on the element itself and not on a container around it)
+    const elementsShowing = (dialog, minutes) => {
+        const matches = Array.from(dialog.querySelectorAll("*")).filter(el => {
+            if (!visible(el) || el.tagName === "INPUT") return false
+            const text = el.textContent.trim()
+            return parseClock(text) === minutes || rangesIn(text).some(([a, b]) => a === minutes || b === minutes)
+        })
+        return matches
+            .filter(el => !matches.some(other => other !== el && el.contains(other)))
+            .sort((a, b) => a.textContent.length - b.textContent.length)
+    }
+
+    const pointerClick = el => {
+        const r = el.getBoundingClientRect()
+        const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 }
+        try {
+            el.dispatchEvent(new PointerEvent("pointerdown", { ...base, buttons: 1, pointerType: "mouse", isPrimary: true }))
+        } catch (err) {}
+        el.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }))
+        try {
+            el.dispatchEvent(new PointerEvent("pointerup", { ...base, buttons: 0, pointerType: "mouse", isPrimary: true }))
+        } catch (err) {}
+        el.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }))
+        el.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }))
+    }
+
+    // Chrome ignores keyCode/which in KeyboardEvent's constructor, but Google's code reads them
+    const pressKey = (el, key, keyCode) => {
+        for (const type of ["keydown", "keypress", "keyup"]) {
+            if (type === "keypress" && keyCode !== 13) continue
+            const e = new KeyboardEvent(type, { key, code: key, bubbles: true, cancelable: true, composed: true, view: window })
+            for (const prop of ["keyCode", "which"]) Object.defineProperty(e, prop, { get: () => keyCode })
+            if (type === "keypress") Object.defineProperty(e, "charCode", { get: () => 13 })
+            el.dispatchEvent(e)
+        }
+    }
+
+    // Type a time into a field like a person: focus, replace the text, Enter, leave the field
+    const typeInto = async (input, minutes, date) => {
+        const token = (input.value.match(SINGLE_RE) || [])[0] || timeSample()[3]
+        const text = rewriteSingle(token, new Date(date + minutes * MINUTE), "UTC")
+        input.focus()
+        input.dispatchEvent(new FocusEvent("focusin", { bubbles: true }))
+        try {
+            input.select()
+        } catch (err) {}
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, text)
+        input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }))
+        input.dispatchEvent(new Event("change", { bubbles: true }))
+        pressKey(input, "Enter", 13)
+        await sleep(150)
+        if (document.activeElement === input) {
+            input.blur()
+            input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }))
+        }
+        await sleep(150)
+    }
+
+    // Set one end of the range: type into the field showing `shown`, or click what shows it first
+    // (to turn it into a field or open a list of times) and then type / pick the option
+    const setOneTime = async (dialog, shown, want, date, log) => {
+        if (shown === want) return true
+        let input = inputsShowing(dialog, shown)[0]
+        if (!input) {
+            const target = elementsShowing(dialog, shown)[0]
+            log.push(`click ${target ? target.outerHTML.slice(0, 200) : "(nothing shows " + shown + ")"}`)
+            if (!target) return false
+            pointerClick(target)
+            await sleep(300)
+            input = await waitFor(() => inputsShowing(dialog, shown)[0], 700)
+            if (!input) {
+                const option = Array.from(document.querySelectorAll('[role="option"]')).find(o => visible(o) && parseClock(o.textContent) === want)
+                log.push(`option ${option ? option.outerHTML.slice(0, 200) : "(none)"}`)
+                if (option) {
+                    pointerClick(option)
+                    await sleep(300)
+                    return true
+                }
+                // A field the click focused, but only if it shows the time being replaced (never the title)
+                const focused = document.activeElement
+                if (focused && focused.tagName === "INPUT" && !inOurUi(focused) && parseClock(focused.value) === shown) input = focused
+            }
+        }
+        if (!input) return false
+        log.push(`type into ${input.outerHTML.slice(0, 200)}`)
+        await typeInto(input, want, date)
+        return true
+    }
+
+    // Does the popup now show the exact times (in its fields or its text)?
+    const popupShows = (dialog, range) => {
+        const values = Array.from(dialog.querySelectorAll("input")).filter(visible).map(i => parseClock(i.value))
+        if (values.includes(range.start) && values.includes(range.end)) return true
+        return rangesIn(dialog.textContent).some(([a, b]) => a === range.start && b === range.end)
+    }
+
+    const fillPopupTimes = async (dialog, p, range, g, log) => {
+        try {
+            if (!(await setOneTime(dialog, g.start, range.start, p.date, log))) return false
+            // Google may move the end with the start (keeping the duration)
+            const shift = range.start - g.start
+            const endNow = inputsShowing(dialog, g.end + shift).length || elementsShowing(dialog, g.end + shift).length ? g.end + shift : g.end
+            if (!(await setOneTime(dialog, endNow, range.end, p.date, log))) return false
+            await sleep(200)
+            const title = Array.from(dialog.querySelectorAll("input")).find(i => visible(i) && parseClock(i.value) === null && i.type !== "hidden")
+            if (title) title.focus() // back to the title, where Google's popup starts
+            return popupShows(dialog, range)
+        } catch (err) {
+            log.push(`error ${err && err.message}`)
+            return false
+        }
+    }
+
     const openFullEditor = (p, range) => {
         const url = eventEditUrl(p.date, range.start, range.end)
         debug("create in full editor", url)
@@ -832,11 +982,26 @@
             return openFullEditor(p, range)
         }
         if (range.start === g.start && range.end === g.end) return // Google already has the exact times
+        const markupBefore = dialog.outerHTML
+        const log = []
+        if (await fillPopupTimes(dialog, p, range, g, log)) return
+        debug("couldn't fill the popup", log)
+        // Not filled in: the event still gets the exact times once it's saved
+        let version = ""
+        try {
+            version = chrome.runtime.getManifest().version
+        } catch (err) {}
+        const details = JSON.stringify({ version, want: range, google: g, log, before: markupBefore, after: dialog.isConnected ? dialog.outerHTML : "(closed)" })
+        const copyDetails = () =>
+            navigator.clipboard.writeText(details).then(
+                () => toast("Details copied. Paste them to whoever maintains the extension."),
+                () => toast("Couldn't copy the details.")
+            )
         if (!isEnabled()) {
-            toast(`Google's popup uses 15-minute steps. To save events as ${label}, add an API client ID in the extension's settings.`)
+            toast(`Couldn't fill ${label} into Google's popup; please adjust the times there.`, { label: "Copy details", run: copyDetails })
             return
         }
-        toast(`Google's popup shows the nearest 15 minutes. When you save, the event will be set to ${label}.`)
+        toast(`Couldn't fill ${label} into Google's popup. When you save, the event will still be set to ${label}.`, { label: "Copy details", run: copyDetails })
         fixCreatedEvent(p, range, g, dialog, eventsBefore)
     }
 

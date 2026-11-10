@@ -99,14 +99,17 @@ Creating an event:
 - Drag on an empty part of the day or week grid. A *(No title)* preview follows the pointer. Hold **Alt** or
   **Shift** for 5- or 30-minute steps. You can press or release them at any point, before or after you start
   dragging. You can also drag upwards.
-- When you let go, Google's own quick-create popup opens. Google's popup only does 15-minute steps, so it shows the
-  nearest 15 minutes, and a message tells you the exact times the event will get. Type a title and save as usual.
-  As soon as Google has saved the event, it's set to the exact times.
+- When you let go, Google's own quick-create popup opens and the exact start and end times are filled into it.
+  Type a title and save as usual.
+- If the times can't be filled in (for example after Google changes its popup), the popup shows the nearest
+  15 minutes and a message says so. The event is still set to the exact times as soon as Google has saved it. The
+  message has a **Copy details** button that copies what's needed to fix the filling; please paste it into an
+  issue.
 - If you change the times in Google's popup yourself before saving, your times are kept. Closing the popup without
   saving creates nothing.
 - Press **Esc** while dragging to cancel. A plain click on empty space works as before.
-- Setting the exact times needs the API client ID (see the setup below). Without it, events are created with
-  Google's 15-minute times.
+- Filling in the popup works without any setup. Fixing the times after saving, when filling didn't work, needs the
+  API client ID (see the setup below).
 - If Google's popup doesn't open at all, the full event editor opens with the exact times instead, and plain drags
   are left to Google until you reload the page.
 
