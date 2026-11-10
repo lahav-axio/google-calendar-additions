@@ -1,10 +1,10 @@
 {
   "appName": {
-    "message": "Cal Merge for Google Calendar™",
+    "message": "Cal Merge + My Calendar for Google Calendar™",
     "description": "The title of the application, displayed in the web store."
   },
   "appDesc": {
-    "message": "Chrome extension that visually merges the same event on multiple Google Calendars into one event.",
+    "message": "Merges duplicate events across Google Calendars, or shows only the copy on your own calendar.",
     "description": "The description of the application, displayed in the web store."
   }
 }

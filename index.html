@@ -46,6 +46,9 @@
         .left {
             text-align: left;
         }
+        .hidden {
+            display: none;
+        }
         #version {
             position: absolute;
             top: 0;
@@ -57,6 +60,7 @@
     <body>
         <p id="version"></p>
         <h1>Cal Merge for <br />Google Calendar<sup style="font-size: 50%">TM</sup></h1>
+        <h5>+ My Calendar mode (custom fork)</h5>
         <h4>By <a href="https://github.com/hcawn/gcal-multical-event-merge/" target="_blank" style="color: black">HCAWN</a></h4>
         <h5>Forked from <a href="https://github.com/imightbeamy/gcal-multical-event-merge" target="_blank" style="color: black">imightbeamy</a></h5>
         <div class="table">
@@ -67,6 +71,27 @@
                 </div>
             </div>
             <div class="row">
+                <div class="cell left" title="Merge: blend duplicate events into one striped event.&#10;My calendar only: show just the copy on your own calendar and hide the copies from other calendars.">Mode</div>
+                <div class="cell right">
+                    <select id="select_mode">
+                        <option value="merge">Merge (blend colours)</option>
+                        <option value="own_only">My calendar only</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row own-only">
+                <div class="cell left" title="Your calendar's id, usually your email.&#10;Separate several with commas.&#10;Leave blank to auto-detect the signed-in account.">My calendar</div>
+                <div class="cell right">
+                    <input id="my_calendars" style="width: 150px" type="text" placeholder="auto-detect" />
+                </div>
+            </div>
+            <div class="row own-only">
+                <div class="cell left" title="Also hide events that don't appear on your calendar at all.&#10;Off: only duplicates are collapsed to your copy.">Hide events not on my calendar</div>
+                <div class="cell right">
+                    <input id="toggle_hide_not_mine" type="checkbox" />
+                </div>
+            </div>
+            <div class="row merge-only">
                 <div class="cell left">Style</div>
                 <div class="cell right">
                     <select id="select_style">

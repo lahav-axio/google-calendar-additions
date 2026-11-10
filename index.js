@@ -46,6 +46,35 @@ window.onload = function () {
         setText('wildcard_value',value)
     });
 
+    // ---- "My calendar only" mode settings (added in this fork) ----
+    const updateRows = mode => {
+        document.querySelectorAll('.own-only').forEach(r => r.classList.toggle('hidden', mode !== 'own_only'))
+        document.querySelectorAll('.merge-only').forEach(r => r.classList.toggle('hidden', mode === 'own_only'))
+    }
+
+    chrome.storage.local.get(['mode', 'myCalendars', 'hideNotMine', 'detectedEmail'], s => {
+        const mode = s.mode || 'merge'
+        if (!s.mode) chrome.storage.local.set({ 'mode': mode });
+        setDropdown('select_mode', mode)
+        setText('my_calendars', s.myCalendars || '')
+        if (s.detectedEmail) document.getElementById('my_calendars').placeholder = `auto: ${s.detectedEmail}`
+        setToggle('toggle_hide_not_mine', !!s.hideNotMine)
+        updateRows(mode)
+    });
+
+    document.getElementById('select_mode').onchange = function (e) {
+        chrome.storage.local.set({ 'mode': e.target.value });
+        updateRows(e.target.value)
+    };
+
+    document.getElementById('my_calendars').onchange = function (e) {
+        chrome.storage.local.set({ 'myCalendars': e.target.value.trim() });
+    };
+
+    document.getElementById('toggle_hide_not_mine').onchange = function (e) {
+        chrome.storage.local.set({ 'hideNotMine': e.target.checked });
+    };
+
     const manifest_data = chrome.runtime.getManifest();
     document.getElementById('version').innerHTML=`V${manifest_data.version}`
 

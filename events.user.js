@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name        Cal Merge for Google Calendar™ (by @HCAWN forked from @imightbeAmy)
+// @name        Cal Merge + My Calendar (fork of Cal Merge by @HCAWN, itself forked from @imightbeAmy)
 // @namespace   gcal-multical-event-merge
 // @include     https://www.google.com/calendar/*
 // @include     http://www.google.com/calendar/*
@@ -211,6 +211,134 @@ const mergeEventElements = async events => {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// "My calendar only" mode (added in this fork)
+// Instead of blending duplicate events, keep only the copy that lives on your
+// own calendar and hide the copies from other calendars.
+// ---------------------------------------------------------------------------
+
+// Google abbreviates calendar ids inside event ids, e.g. "jane@m" = jane@gmail.com
+const CAL_SUFFIXES = {
+    m: "gmail.com",
+    g: "group.calendar.google.com",
+    v: "group.v.calendar.google.com",
+    i: "import.calendar.google.com"
+}
+
+// data-eventid is base64("<eventId> <calendarId>"); pull the calendar id out of it
+const getEventCalendar = el => {
+    if (el.ownCalendarId !== undefined) return el.ownCalendarId
+    let cal = null
+    const holder = el.closest("[data-eventid]")
+    const raw = holder && holder.dataset.eventid
+    if (raw) {
+        try {
+            let b64 = raw.replace(/-/g, "+").replace(/_/g, "/")
+            while (b64.length % 4) b64 += "="
+            const parts = atob(b64).trim().split(/\s+/)
+            if (parts.length >= 2) {
+                cal = parts[parts.length - 1].toLowerCase()
+                const short = cal.match(/^(.*)@([a-z])$/)
+                if (short && CAL_SUFFIXES[short[2]]) cal = `${short[1]}@${CAL_SUFFIXES[short[2]]}`
+            }
+        } catch (e) {
+            cal = null
+        }
+    }
+    el.ownCalendarId = cal
+    return cal
+}
+
+// Find the signed-in account's email (account button's aria-label contains it)
+let detectedEmail = null
+const detectMyEmail = () => {
+    if (detectedEmail) return detectedEmail
+    const emailRe = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
+    const candidates = document.querySelectorAll('[data-email], a[aria-label*="@"], [aria-label*="@"][role="button"]')
+    for (const el of candidates) {
+        const text = el.getAttribute("data-email") || el.getAttribute("aria-label") || ""
+        const m = text.match(emailRe)
+        if (m) {
+            detectedEmail = m[0].toLowerCase()
+            try {
+                chrome.storage.local.set({ detectedEmail })
+            } catch (e) {}
+            return detectedEmail
+        }
+    }
+    return null
+}
+
+// The user's own calendar ids: from the popup setting (comma separated), else auto-detected
+const getMyCalendars = setting => {
+    const fromSetting = (setting || "")
+        .split(",")
+        .map(s => s.trim().toLowerCase())
+        .filter(Boolean)
+    if (fromSetting.length) return fromSetting
+    const auto = detectMyEmail()
+    return auto ? [auto] : []
+}
+
+const isMine = (event, myCalendars) => {
+    const cal = getEventCalendar(event)
+    if (!cal) return false
+    // an entry without "@" is treated as a substring match (e.g. "lahav")
+    return myCalendars.some(mine => (mine.includes("@") ? cal === mine : cal.includes(mine)))
+}
+
+const rememberStyle = (event, keys) => {
+    event.originalStyle = event.originalStyle || {}
+    keys.forEach(k => {
+        if (!(k in event.originalStyle)) event.originalStyle[k] = event.style[k]
+    })
+}
+
+const hideEvent = event => {
+    rememberStyle(event, ["display"])
+    event.style.display = "none"
+}
+
+// Returns true if every event in the group ended up hidden
+const showOwnOnly = (events, myCalendars, hideNotMine) => {
+    let own = events.filter(e => isMine(e, myCalendars))
+
+    if (!own.length) {
+        // Nothing from my calendar in this group
+        if (hideNotMine && myCalendars.length) {
+            events.forEach(hideEvent)
+            return true
+        }
+        // Can't tell which copy is mine: at least de-duplicate by keeping the first one
+        if (events.length > 1 && !myCalendars.length) own = [events[0]]
+        else return false
+    }
+
+    if (events.length < 2) return false
+
+    // Measure everything before hiding anything (hidden elements have no size)
+    const parentPosition = events[0].parentElement.getBoundingClientRect()
+    const positions = events.map(event => {
+        event.originalPosition = event.originalPosition || calculatePosition(event, parentPosition)
+        return event.originalPosition
+    })
+
+    const keeper = own[0]
+    events.filter(e => e !== keeper).forEach(hideEvent)
+
+    // Timed events are laid out side by side; stretch my copy over the freed space
+    if (keeper.style.left || keeper.style.width) {
+        rememberStyle(keeper, ["left", "right", "width"])
+        keeper.style.left = Math.min(...positions.map(p => p.left)) + "px"
+        keeper.style.right = Math.min(...positions.map(p => p.right)) + "px"
+        keeper.style.width = null
+    }
+    return false
+}
+
+let loggedCalendars = false
+
 const resetMergedEvents = events => {
     events.forEach(event => {
         for (var k in event.originalStyle) {
@@ -266,6 +394,12 @@ const merge = async mainCalender => {
     } catch (error) {
         wildcard = ""
     }
+    const settings = await new Promise(res =>
+        chrome.storage.local.get(["mode", "myCalendars", "hideNotMine"], s => res(s || {}))
+    )
+    const ownMode = settings.mode === "own_only"
+    const myCalendars = ownMode ? getMyCalendars(settings.myCalendars) : []
+
     const eventSets = {}
     const days = mainCalender.querySelectorAll('[role="gridcell"]')
     days.forEach((day, index) => {
@@ -304,7 +438,14 @@ const merge = async mainCalender => {
         // get the current count for this day to use as top position of events
         const current_count_for_day = daysWithMergedEvents.find(d => d.index === index).amount
 
-        if (events.length > 1) {
+        if (ownMode) {
+            if (!loggedCalendars) {
+                loggedCalendars = true
+                console.log("Cal merge (my calendar mode): my calendars =", myCalendars, "example event calendar =", getEventCalendar(events[0]))
+            }
+            const allHidden = showOwnOnly(events, myCalendars, settings.hideNotMine)
+            if (allHidden) return
+        } else if (events.length > 1) {
             mergeEventElements(events)
         } else {
             resetMergedEvents(events)
@@ -350,6 +491,7 @@ setTimeout(
                 if (changes.disabled) window.location.reload()
                 if (changes.style) window.location.reload()
                 if (changes.wildcard) window.location.reload()
+                if (changes.mode || changes.myCalendars || changes.hideNotMine) window.location.reload()
             })
         }),
     10
