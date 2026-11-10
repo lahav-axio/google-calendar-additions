@@ -64,8 +64,9 @@ bottom edge. It then saves the new time through the
 it as usual.
 
 How it behaves:
-- Times snap to the 15-minute grid, or to the 5-minute grid while Alt is held. The preview shows the new time
-  while you drag, with "5 min" added when Alt is held.
+- Times snap to the 15-minute grid, or to the 5-minute grid while Alt is held. While you drag, the event itself
+  moves and shows its new times, just like Google's own preview.
+- Grabbing the bottom edge anywhere on Google's resize handle works too, including with Alt.
 - Press **Esc** while dragging to cancel.
 - Moving an event works across days in the week view. Dragging near the top or bottom of the grid scrolls it.
 - If the event has guests, you're asked whether to send them update emails, just as Google does.

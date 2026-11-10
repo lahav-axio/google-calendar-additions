@@ -9,6 +9,13 @@
 // saves the result through the Google Calendar API (see background.js). Clicks without a drag are
 // handed back to Google untouched, so opening an event still works as before.
 //
+// This script runs at document_start so its listeners are registered before Google's: that way
+// Google never sees a drag this script handles (otherwise Google would run its own drag too, e.g.
+// Alt+drag would also make Google duplicate the event).
+//
+// While dragging, the event element itself is moved/resized and the times shown in it are updated,
+// so the preview looks exactly like Google's own.
+//
 // The feature only switches on once a Google API client id is set in the popup. Without one,
 // Google's own dragging is left alone.
 
@@ -19,9 +26,15 @@
     const FINE_STEP = 5 // minutes, while Alt is held
     const DRAG_THRESHOLD = 4 // px of movement before a press becomes a drag
     const MIN_COLUMN_HEIGHT = 300 // px; day/week time-grid columns are much taller than month cells
-    const PIN_TIMEOUT = 30000 // ms to wait for Google Calendar to redraw a saved event
+    const HANDLE_BELOW = 8 // px below an event's bottom edge that still count as its resize handle
     const MINUTE = 60 * 1000
     const DAY = 24 * 60 * MINUTE
+
+    let debugEnabled = false
+    try {
+        debugEnabled = window.localStorage.getItem("calmerge-debug") === "1"
+    } catch (e) {}
+    const debug = (...args) => debugEnabled && console.log("[Cal Merge drag]", ...args)
 
     // ---- settings -------------------------------------------------------------------------
 
@@ -121,15 +134,16 @@
             }))
         const p = {}
         f.formatToParts(date).forEach(({ type, value }) => (p[type] = Number(value)))
+        p.hour = p.hour % 24
         return p
     }
     const minutesOfDay = (date, tz) => {
         const p = partsIn(date, tz)
-        return (p.hour % 24) * 60 + p.minute + p.second / 60
+        return p.hour * 60 + p.minute + p.second / 60
     }
     const offsetMinutes = (date, tz) => {
         const p = partsIn(date, tz)
-        const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second)
+        const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second)
         return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / MINUTE)
     }
     const dayKey = (date, tz) => {
@@ -151,9 +165,82 @@
     const clamp = (value, min, max) => Math.min(Math.max(value, min), max)
     const clampDate = (date, min, max) => new Date(clamp(date.getTime(), min.getTime(), max.getTime()))
 
-    const formatTime = (date, tz) =>
-        date.toLocaleTimeString(undefined, { timeZone: tz, hour: "numeric", minute: "2-digit" })
-    const formatDay = (date, tz) => date.toLocaleDateString(undefined, { timeZone: tz, weekday: "short", day: "numeric" })
+    // ---- the times written inside an event chip -------------------------------------------
+    // Google writes e.g. "10 – 11am", "10:30am – 12pm", "14:00 – 15:00" or "Standup, 10am".
+    // While dragging, those are rewritten in the same style so the chip shows the new times.
+
+    const T = "\\d{1,2}(?::\\d{2})?(?:\\s?[ap]\\.?m\\.?)?"
+    const RANGE_RE = new RegExp(`(${T})(\\s*[–—-]\\s*)(${T})`, "i")
+    const SINGLE_RE = /\d{1,2}:\d{2}(?:\s?[ap]\.?m\.?)?|\d{1,2}\s?[ap]\.?m\.?/i
+    const SUFFIX_RE = /\s?[ap]\.?m\.?$/i
+    const looksLikeTime = s => /:\d{2}|[ap]\.?m/i.test(s)
+    const pad = n => String(n).padStart(2, "0")
+
+    // Same am/pm spelling as the sample ("am", " AM", "a.m."), for the given half of the day
+    const suffixLike = (sample, pm) =>
+        sample.replace(/[ap]/i, ch => (ch === ch.toUpperCase() ? (pm ? "P" : "A") : pm ? "p" : "a"))
+
+    const clockLike = (date, tz, style) => {
+        const { hour, minute } = partsIn(date, tz)
+        if (style.twelve) {
+            const h = hour % 12 || 12
+            return minute || style.zeroMinutes ? `${h}:${pad(minute)}` : `${h}`
+        }
+        return `${style.padHour ? pad(hour) : hour}:${pad(minute)}`
+    }
+
+    const rewriteRange = (m, start, end, tz) => {
+        const [, a, sep, b] = m
+        const sampleSuffix = (b.match(SUFFIX_RE) || a.match(SUFFIX_RE) || [""])[0]
+        const style = { twelve: !!sampleSuffix, zeroMinutes: /:00/.test(a + b), padHour: /^0\d/.test(a) }
+        const startPm = partsIn(start, tz).hour >= 12
+        const endPm = partsIn(end, tz).hour >= 12
+        let s = clockLike(start, tz, style)
+        let e = clockLike(end, tz, style)
+        if (style.twelve) {
+            if (SUFFIX_RE.test(a) || startPm !== endPm) s += suffixLike(sampleSuffix, startPm)
+            e += suffixLike(sampleSuffix, endPm)
+        }
+        return `${s}${sep}${e}`
+    }
+
+    const rewriteSingle = (token, start, tz) => {
+        const sampleSuffix = (token.match(SUFFIX_RE) || [""])[0]
+        const style = { twelve: !!sampleSuffix, zeroMinutes: /:/.test(token), padHour: /^0\d/.test(token) }
+        const text = clockLike(start, tz, style)
+        return style.twelve ? text + suffixLike(sampleSuffix, partsIn(start, tz).hour >= 12) : text
+    }
+
+    // The visible text nodes in the chip that contain times
+    const collectTimeTexts = box => {
+        const out = []
+        const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT)
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (!node.parentElement || !node.parentElement.closest('[aria-hidden="true"]')) continue
+            const text = node.nodeValue
+            const range = text.match(RANGE_RE)
+            if (range && looksLikeTime(range[1] + range[3])) out.push({ node, original: text, range })
+            else {
+                const single = text.match(SINGLE_RE)
+                if (single) out.push({ node, original: text, single: single[0] })
+            }
+        }
+        return out
+    }
+
+    const writeTimes = (texts, start, end, tz) =>
+        texts.forEach(t => {
+            if (!t.node.isConnected) return
+            const value = t.range
+                ? t.original.replace(t.range[0], rewriteRange(t.range, start, end, tz))
+                : t.original.replace(t.single, rewriteSingle(t.single, start, tz))
+            if (t.node.nodeValue !== value) t.node.nodeValue = value
+        })
+
+    const restoreTimes = texts =>
+        texts.forEach(t => {
+            if (t.node.isConnected && t.node.nodeValue !== t.original) t.node.nodeValue = t.original
+        })
 
     // ---- DOM helpers -------------------------------------------------------------------------
 
@@ -163,15 +250,43 @@
         if (!(target instanceof Element)) return null
         const holder = target.closest("[data-eventid]")
         if (!holder) return null
-        let box = target.closest('[role="button"]')
-        if (!box || !(holder === box || holder.contains(box))) box = holder
-        if (!box.style.height && holder.style.height) box = holder
-        if (!box.style.height) return null
+        const button = target.closest('[role="button"]')
+        const candidates = [
+            button && (button === holder || holder.contains(button)) ? button : null,
+            holder,
+            holder.querySelector('[role="button"]')
+        ]
+        const box = candidates.find(c => c && c.style.height)
+        if (!box) return null
         const column = holder.closest('[role="gridcell"]')
         if (!column || column.getBoundingClientRect().height < MIN_COLUMN_HEIGHT) return null
         const ids = decodeEventId(holder.dataset.eventid || "")
         if (!ids) return null
         return { holder, box, column, ...ids }
+    }
+
+    // Like findTimedEvent, but also finds the event when the pointer is on something drawn over it,
+    // such as Google's bottom resize handle (which isn't always inside the event element).
+    const findTimedEventAt = e => {
+        const direct = findTimedEvent(e.target)
+        if (direct) return direct
+        const stack = document.elementsFromPoint(e.clientX, e.clientY)
+        for (const el of stack) {
+            const found = findTimedEvent(el)
+            if (found) return found
+        }
+        // Just below an event's bottom edge: the handle can hang slightly below the event
+        const column = stack.map(el => el.closest && el.closest('[role="gridcell"]')).find(Boolean)
+        if (!column) return null
+        for (const holder of column.querySelectorAll("[data-eventid]")) {
+            const found = findTimedEvent(holder)
+            if (!found) continue
+            const r = found.box.getBoundingClientRect()
+            if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.bottom - 2 && e.clientY <= r.bottom + HANDLE_BELOW) {
+                return found
+            }
+        }
+        return null
     }
 
     // All day columns of the time grid, left to right
@@ -211,9 +326,7 @@
         return null
     }
 
-    const isTransparent = color => !color || color === "transparent" || /rgba\(.*,\s*0\)$/.test(color)
-
-    // ---- UI: styles, ghost, toast, guest dialog -------------------------------------------------
+    // ---- UI: styles, toast, guest dialog ------------------------------------------------------
 
     const injectStyles = () => {
         if (document.getElementById("calmerge-drag-style")) return
@@ -224,14 +337,6 @@
             html.calmerge-dragging-ns, html.calmerge-dragging-ns * { cursor: ns-resize !important; }
             html.calmerge-dragging-move, html.calmerge-dragging-move * { cursor: grabbing !important; }
             html.calmerge-dragging, html.calmerge-dragging * { user-select: none !important; }
-            .calmerge-ghost {
-                position: fixed; z-index: 2147483000; pointer-events: none; box-sizing: border-box;
-                border-radius: 4px; padding: 2px 6px; overflow: hidden;
-                font: 500 12px/16px Roboto, Arial, sans-serif;
-                box-shadow: 0 6px 10px rgba(0,0,0,.14), 0 1px 18px rgba(0,0,0,.12), 0 3px 5px rgba(0,0,0,.2);
-            }
-            .calmerge-ghost .calmerge-ghost-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-            .calmerge-ghost .calmerge-ghost-step { opacity: .8; font-weight: 400; }
             .calmerge-toast {
                 position: fixed; left: 24px; bottom: 24px; z-index: 2147483001; display: flex; gap: 16px;
                 align-items: center; max-width: 520px; padding: 14px 16px; border-radius: 4px;
@@ -320,40 +425,51 @@
             backdrop.querySelector('[data-choice="all"]').focus()
         })
 
-    // The floating preview that follows the pointer. Its position is stored relative to a day
-    // column, so it stays in place when the grid scrolls.
-    const createGhost = found => {
-        injectStyles()
-        const ghost = document.createElement("div")
-        ghost.className = "calmerge-ghost"
-        const cs = getComputedStyle(found.box)
-        ghost.style.background = !isTransparent(cs.backgroundColor)
-            ? cs.backgroundColor
-            : !isTransparent(cs.borderTopColor)
-            ? cs.borderTopColor
-            : "#039be5"
-        ghost.style.color = isTransparent(cs.backgroundColor) ? "#fff" : cs.color
-        const title = document.createElement("div")
-        title.className = "calmerge-ghost-title"
-        const titleText = Array.from(found.box.querySelectorAll('[aria-hidden="true"]'))
-            .map(el => el.textContent.trim())
-            .filter(Boolean)[0]
-        title.textContent = titleText || ""
-        const time = document.createElement("div")
-        ghost.append(title, time)
-        document.body.appendChild(ghost)
-        return { el: ghost, time, anchor: null }
+    // ---- the preview: the event element itself, moved and resized ----------------------------
+
+    const PREVIEW_STYLES = ["transform", "height", "zIndex", "boxShadow", "transition"]
+
+    const startPreview = p => {
+        const box = p.found.box
+        p.savedStyle = {}
+        PREVIEW_STYLES.forEach(k => (p.savedStyle[k] = box.style[k]))
+        p.boxHeight = box.getBoundingClientRect().height
+        p.timeTexts = collectTimeTexts(box)
+        box.style.transition = "none"
+        box.style.zIndex = "1000"
+        if (p.kind === "move") box.style.boxShadow = "0 6px 10px rgba(0,0,0,.14), 0 1px 18px rgba(0,0,0,.12), 0 3px 5px rgba(0,0,0,.2)"
     }
 
-    const placeGhost = ghost => {
-        const a = ghost.anchor
-        if (!a || !a.column.isConnected) return
-        const col = a.column.getBoundingClientRect()
-        const top = col.top + a.topInCol
-        ghost.el.style.top = `${top}px`
-        ghost.el.style.height = `${Math.max(a.bottomInCol - a.topInCol, 8)}px`
-        ghost.el.style.left = `${col.left + a.leftFrac * col.width}px`
-        ghost.el.style.width = `${Math.max(a.widthFrac * col.width, 24)}px`
+    const showPreview = (p, { dStartPx, dEndPx, dx }) => {
+        const box = p.found.box
+        box.style.transform =
+            dx || dStartPx ? `${p.savedStyle.transform || ""} translate(${dx}px, ${dStartPx}px)`.trim() : p.savedStyle.transform
+        box.style.height = `${Math.max(p.boxHeight + dEndPx - dStartPx, 4)}px`
+    }
+
+    // Put the event back exactly as Google drew it
+    const restorePreview = p => {
+        const box = p.found.box
+        if (!p.savedStyle) return
+        if (box.isConnected) PREVIEW_STYLES.forEach(k => (box.style[k] = p.savedStyle[k]))
+        restoreTimes(p.timeTexts || [])
+    }
+
+    // After saving: keep the event at its new place until Google Calendar redraws it itself
+    const keepPreview = p => {
+        const box = p.found.box
+        ;["zIndex", "boxShadow", "transition"].forEach(k => (box.style[k] = p.savedStyle[k]))
+        const ours = { top: box.style.top, height: box.style.height, transform: box.style.transform }
+        const observer = new MutationObserver(() => {
+            if (!box.isConnected) return observer.disconnect()
+            // Google redrew the event in place (new top/height): drop our offset so it isn't applied twice
+            if (box.style.top !== ours.top || (box.style.height !== ours.height && box.style.transform === ours.transform)) {
+                if (box.style.transform === ours.transform) box.style.transform = p.savedStyle.transform
+                observer.disconnect()
+            }
+        })
+        observer.observe(box, { attributes: true, attributeFilter: ["style"] })
+        p.stopKeeping = () => observer.disconnect()
     }
 
     // ---- drag state machine ----------------------------------------------------------------------
@@ -363,7 +479,6 @@
     let suppressClickUntil = 0
     let swallowAltKeyUp = false
     let hovered = null
-    const pinned = new Set()
 
     const zoneFor = (found, e) => {
         const rect = found.box.getBoundingClientRect()
@@ -371,8 +486,12 @@
         const edge = Math.max(3, Math.min(8, rect.height * 0.25))
         if (y <= edge) return "start"
         if (y >= rect.height - edge) return "end"
-        // Google's own bottom resize handle (if the pointer is on it)
-        if (y > rect.height / 2 && e.target !== found.box && /resize/.test(getComputedStyle(e.target).cursor)) return "end"
+        // Google's own bottom resize handle, drawn over the event
+        const onHandle =
+            e.target instanceof Element &&
+            !found.box.contains(e.target) &&
+            /resize/.test(getComputedStyle(e.target).cursor)
+        if (onHandle && y > rect.height / 2) return "end"
         return "move"
     }
 
@@ -388,13 +507,17 @@
 
     const beginPress = e => {
         if (!isActive() || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return false
-        const found = findTimedEvent(e.target)
-        if (!found) return false
+        const found = findTimedEventAt(e)
+        if (!found) {
+            debug("no timed event under the pointer", e.target)
+            return false
+        }
         const colRect = found.column.getBoundingClientRect()
-        const boxRect = found.box.getBoundingClientRect()
+        const kind = zoneFor(found, e)
+        debug("press", kind, found.eventId, found.calendarId, e.target)
         press = {
             found,
-            kind: zoneFor(found, e),
+            kind,
             target: e.target,
             pointerId: e.pointerId,
             downInit: {
@@ -417,10 +540,6 @@
             startY: e.clientY,
             startYInCol: e.clientY - colRect.top,
             pxPerMin: colRect.height / (24 * 60),
-            topInCol: boxRect.top - colRect.top,
-            bottomInCol: boxRect.bottom - colRect.top,
-            leftFrac: (boxRect.left - colRect.left) / colRect.width,
-            widthFrac: boxRect.width / colRect.width,
             alt: e.altKey,
             lastX: e.clientX,
             lastY: e.clientY,
@@ -445,10 +564,9 @@
         p.columns = p.kind === "move" ? findColumns(p.found.column) : [p.found.column]
         if (!p.columns.includes(p.found.column)) p.columns.push(p.found.column)
         p.scroller = findScroller(p.found.column)
-        p.ghost = createGhost(p.found)
-        p.boxOpacity = p.found.box.style.opacity
-        p.found.box.style.opacity = "0.4"
+        startPreview(p)
         document.documentElement.classList.add("calmerge-dragging", p.kind === "move" ? "calmerge-dragging-move" : "calmerge-dragging-ns")
+        injectStyles()
         setHover(null)
         try {
             p.target.setPointerCapture(p.pointerId)
@@ -500,6 +618,8 @@
         return { minutes, days, column }
     }
 
+    const hasTimes = data => data && data.event.start && data.event.start.dateTime && data.event.end && data.event.end.dateTime
+
     // New start/end for the current pointer position
     const computeTimes = (p, { minutes, days }) => {
         const step = p.alt ? FINE_STEP : STEP
@@ -531,35 +651,20 @@
         const step = p.alt ? FINE_STEP : STEP
         let dStart = 0
         let dEnd = 0
-        let label = ""
-        if (p.data && p.data.event.start && p.data.event.start.dateTime) {
+        if (hasTimes(p.data)) {
             const t = computeTimes(p, move)
             const dayShift = move.days * 24 * 60
             dStart = (t.start - t.s0) / MINUTE - dayShift
             dEnd = (t.end - t.e0) / MINUTE - dayShift
-            label = `${formatTime(t.start, p.data.tz)} – ${formatTime(t.end, p.data.tz)}`
-            if (move.days) label = `${formatDay(t.start, p.data.tz)}, ${label}`
+            writeTimes(p.timeTexts, t.start, t.end, p.data.tz)
         } else {
             // Event details still loading: move in whole steps for now
             const d = Math.round(move.minutes / step) * step
             if (p.kind !== "end") dStart = d
             if (p.kind !== "start") dEnd = d
         }
-        p.ghost.anchor = {
-            column: move.column,
-            topInCol: p.topInCol + dStart * p.pxPerMin,
-            bottomInCol: p.bottomInCol + dEnd * p.pxPerMin,
-            leftFrac: p.leftFrac,
-            widthFrac: p.widthFrac
-        }
-        p.ghost.time.textContent = label
-        if (p.alt) {
-            const hint = document.createElement("span")
-            hint.className = "calmerge-ghost-step"
-            hint.textContent = `${label ? " · " : ""}5 min`
-            p.ghost.time.appendChild(hint)
-        }
-        placeGhost(p.ghost)
+        const dx = move.column.getBoundingClientRect().left - p.found.column.getBoundingClientRect().left
+        showPreview(p, { dStartPx: dStart * p.pxPerMin, dEndPx: dEnd * p.pxPerMin, dx })
     }
 
     const endDragVisuals = p => {
@@ -570,57 +675,15 @@
         } catch (err) {}
     }
 
-    const restore = p => {
-        if (p.ghost) p.ghost.el.remove()
-        if (p.found.box.isConnected) p.found.box.style.opacity = p.boxOpacity || ""
-    }
-
     const cancelDrag = () => {
         const p = press
         press = null
         if (!p) return
         if (p.dragging) {
             endDragVisuals(p)
-            restore(p)
+            restorePreview(p)
             swallowUntilUp = true
         }
-    }
-
-    // Keep the preview on screen at the new time until Google Calendar redraws the event
-    const pin = p => {
-        const box = p.found.box
-        const col0 = p.found.column.getBoundingClientRect()
-        const r0 = box.getBoundingClientRect()
-        const before = { top: r0.top - col0.top, height: r0.height }
-        const entry = { p }
-        pinned.add(entry)
-        const startedAt = Date.now()
-        const check = () => {
-            if (!pinned.has(entry)) return
-            let redrawn = !box.isConnected || !p.found.column.isConnected
-            if (!redrawn) {
-                const c = p.found.column.getBoundingClientRect()
-                const r = box.getBoundingClientRect()
-                redrawn = Math.abs(r.top - c.top - before.top) > 2 || Math.abs(r.height - before.height) > 2
-            }
-            if (redrawn) return unpin(entry)
-            if (Date.now() - startedAt > PIN_TIMEOUT) {
-                unpin(entry)
-                toast("Saved. Google Calendar hasn't redrawn the event yet, so reload to see the new time.", {
-                    label: "Reload",
-                    run: () => window.location.reload()
-                })
-                return
-            }
-            setTimeout(check, 400)
-        }
-        setTimeout(check, 400)
-        return entry
-    }
-
-    const unpin = entry => {
-        if (!pinned.delete(entry)) return
-        restore(entry.p)
     }
 
     const describeError = err => {
@@ -633,14 +696,10 @@
         const p = press
         press = null
         endDragVisuals(p)
-        let entry = null
         try {
-            p.ghost.time.textContent = "Loading…"
             await p.dataPromise
             const { event, tz } = p.data
-            if (!event.start || !event.start.dateTime || !event.end || !event.end.dateTime) {
-                throw new Error("All-day events can't be dragged this way.")
-            }
+            if (!hasTimes(p.data)) throw new Error("All-day events can't be dragged this way.")
             if (event.organizer && event.organizer.self === false && !event.guestsCanModify) {
                 throw new Error("Only the organizer can change this event's time.")
             }
@@ -648,17 +707,23 @@
                 throw new Error("Events that run past midnight can't be dragged this way yet.")
             }
 
-            render()
             const move = rawMovement(p)
             const { start, end, s0, e0 } = computeTimes(p, move)
-            if (start.getTime() === s0.getTime() && end.getTime() === e0.getTime()) return restore(p)
-            p.ghost.time.textContent = `${formatTime(start, tz)} – ${formatTime(end, tz)}`
+            const dayShift = move.days * 24 * 60
+            const dx = move.column.getBoundingClientRect().left - p.found.column.getBoundingClientRect().left
+            showPreview(p, {
+                dStartPx: ((start - s0) / MINUTE - dayShift) * p.pxPerMin,
+                dEndPx: ((end - e0) / MINUTE - dayShift) * p.pxPerMin,
+                dx
+            })
+            writeTimes(p.timeTexts, start, end, tz)
+            if (start.getTime() === s0.getTime() && end.getTime() === e0.getTime()) return restorePreview(p)
 
             const guests = (event.attendees || []).filter(a => !a.self && !a.resource)
             let sendUpdates = "none"
             if (guests.length) {
                 sendUpdates = await askSendUpdates()
-                if (!sendUpdates) return restore(p)
+                if (!sendUpdates) return restorePreview(p)
             }
 
             const timeField = (date, original) => {
@@ -666,31 +731,32 @@
                 if (original.timeZone) field.timeZone = original.timeZone
                 return field
             }
-            p.ghost.time.textContent = `${formatTime(start, tz)} – ${formatTime(end, tz)} · Saving…`
-            entry = pin(p)
+            keepPreview(p)
             const path = eventPath(p.found.calendarId, event.id || p.found.eventId)
             await api("PATCH", path, {
                 query: { sendUpdates },
                 body: { start: timeField(start, event.start), end: timeField(end, event.end) }
             })
-            p.ghost.time.textContent = `${formatTime(start, tz)} – ${formatTime(end, tz)}`
-            const undo = () =>
+            const undo = () => {
+                p.stopKeeping()
+                restorePreview(p)
                 api("PATCH", path, { query: { sendUpdates }, body: { start: event.start, end: event.end } }).then(
-                    () => toast("Change undone. Reload Google Calendar if it still shows the new time."),
+                    () => toast("Change undone."),
                     err => toast(`Couldn't undo: ${describeError(err)}`)
                 )
+            }
             toast(event.recurringEventId ? "Event updated (only this occurrence)" : "Event updated", {
                 label: "Undo",
                 run: undo
             })
         } catch (err) {
-            if (entry) unpin(entry)
-            else restore(p)
+            if (p.stopKeeping) p.stopKeeping()
+            restorePreview(p)
             toast(describeError(err))
         }
     }
 
-    // ---- event listeners (capture phase on window, so they run before Google's) --------------
+    // ---- event listeners (capture phase on window, registered before Google's) ----------------
 
     const on = (type, fn) => window.addEventListener(type, e => e.isTrusted && fn(e), true)
 
@@ -707,6 +773,14 @@
         }
     })
 
+    // Google's own drag-and-drop must never start on an event we're handling
+    on("dragstart", e => {
+        if (press || swallowUntilUp) {
+            e.stopImmediatePropagation()
+            e.preventDefault()
+        }
+    })
+
     on("pointermove", e => {
         if (!press) {
             if (!isActive() || e.buttons) return setHover(null)
@@ -716,6 +790,7 @@
         if (e.pointerId !== press.pointerId) return
         press.lastX = e.clientX
         press.lastY = e.clientY
+        e.stopImmediatePropagation()
         if (!press.dragging) {
             if (Math.hypot(e.clientX - press.startX, e.clientY - press.startY) < DRAG_THRESHOLD) return
             startDrag()
@@ -724,12 +799,11 @@
             press.alt = e.altKey
             if (e.altKey) swallowAltKeyUp = true
         }
-        e.stopImmediatePropagation()
         render()
     })
 
     on("mousemove", e => {
-        if ((press && press.dragging) || swallowUntilUp) e.stopImmediatePropagation()
+        if (press || swallowUntilUp) e.stopImmediatePropagation()
     })
 
     on("pointerup", e => {
@@ -750,6 +824,7 @@
         suppressClickUntil = Date.now() + 500
         press.lastX = e.clientX
         press.lastY = e.clientY
+        press.alt = e.altKey
         finishDrag()
     })
 
@@ -777,14 +852,17 @@
         if (waitingForEvent) toast("Drag cancelled. If a Google sign-in window opened, finish signing in, then drag again.")
     })
 
+    // Alt switches between 15- and 5-minute steps; Google must not see Alt during our drag
+    // (it would otherwise treat the drag as "duplicate"), and Windows must not focus the browser
+    // menu when Alt is released.
     on("keydown", e => {
-        if (!press || !press.dragging) return
-        if (e.key === "Escape") {
+        if (!press) return
+        if (e.key === "Escape" && press.dragging) {
             e.stopImmediatePropagation()
             e.preventDefault()
             cancelDrag()
         } else if (e.key === "Alt") {
-            // Stops Windows from moving focus to the browser menu when Alt is released
+            e.stopImmediatePropagation()
             e.preventDefault()
             swallowAltKeyUp = true
             if (!press.alt) {
@@ -796,24 +874,17 @@
 
     on("keyup", e => {
         if (e.key !== "Alt") return
-        if (swallowAltKeyUp) {
+        if (swallowAltKeyUp || press) {
+            e.stopImmediatePropagation()
             e.preventDefault()
             if (!press) swallowAltKeyUp = false
         }
-        if (press && press.dragging && press.alt) {
+        if (press && press.alt) {
             press.alt = false
             render()
         }
     })
 
-    // Keep previews aligned with the grid while it scrolls
-    window.addEventListener(
-        "scroll",
-        () => {
-            if (press && press.dragging) render()
-            pinned.forEach(entry => placeGhost(entry.p.ghost))
-        },
-        true
-    )
-    window.addEventListener("resize", () => pinned.forEach(entry => placeGhost(entry.p.ghost)))
+    // Keep the preview aligned with the grid while it scrolls
+    window.addEventListener("scroll", () => press && press.dragging && render(), true)
 })()

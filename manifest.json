@@ -2,12 +2,18 @@
     "name": "__MSG_appName__",
     "description": "__MSG_appDesc__",
     "default_locale": "en",
-    "version": "2.5.0",
+    "version": "2.5.1",
     "content_scripts": [
         {
             "matches": ["https://www.google.com/calendar/*", "https://calendar.google.com/calendar/*"],
-            "js": ["chroma.min.js", "events.user.js", "drag-edit.js"],
+            "js": ["chroma.min.js", "events.user.js"],
             "run_at": "document_end",
+            "all_frames": true
+        },
+        {
+            "matches": ["https://www.google.com/calendar/*", "https://calendar.google.com/calendar/*"],
+            "js": ["drag-edit.js"],
+            "run_at": "document_start",
             "all_frames": true
         }
     ],
