@@ -3,13 +3,10 @@
 Calendar Additions for Google Calendar™
 =======================================
 
-A Chrome extension that adds extra features to Google Calendar. It started as a fork of
-[HCAWN's Cal Merge](https://github.com/HCAWN/gcal-multical-event-merge) (itself forked from
-[@imightbeamy's repo](https://github.com/imightbeamy/gcal-multical-event-merge)), and keeps all of Cal Merge's
-features.
+A Chrome extension that adds extra features to Google Calendar.
 
 **Duplicate events**
-- **Merge** (from Cal Merge): the same event on several of your calendars is shown as one striped,
+- **Merge**: the same event on several of your calendars is shown as one striped,
   multi-coloured event.
 - **My calendar only**: when an event shows up on several calendars, you see only the copy on *your* calendar.
   The other copies are hidden and your copy fills their space.
@@ -170,6 +167,9 @@ Run `build` (macOS/Linux) or `build_windows.bat` to create `calendar-additions.z
 
 ## License
 
-GPL-3.0, the same as Cal Merge. See [LICENSE](LICENSE).
+GPL-3.0. See [LICENSE](LICENSE).
+
+Based on [Cal Merge](https://github.com/HCAWN/gcal-multical-event-merge) by HCAWN and
+[imightbeamy](https://github.com/imightbeamy/gcal-multical-event-merge).
 
 *Google Calendar is a trademark of Google LLC. This project is not affiliated with Google.*

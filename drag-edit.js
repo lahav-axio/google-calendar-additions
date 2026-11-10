@@ -1,4 +1,4 @@
-// Drag-to-edit for timed events in Google Calendar's day/week views (added in this fork)
+// Drag-to-edit for timed events in Google Calendar's day/week views
 //
 // - Drag an event's TOP edge to change its start time (Google only lets you drag the bottom edge).
 // - Hold Alt (Option on a Mac) while dragging to move in 5-minute steps instead of 15.

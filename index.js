@@ -47,7 +47,7 @@ window.onload = function () {
         setText('wildcard_value',value)
     });
 
-    // ---- "My calendar only" mode settings (added in this fork) ----
+    // ---- "My calendar only" mode settings ----
     const updateRows = mode => {
         document.querySelectorAll('.own-only').forEach(r => r.classList.toggle('hidden', mode !== 'own_only'))
         document.querySelectorAll('.merge-only').forEach(r => r.classList.toggle('hidden', mode === 'own_only'))
@@ -76,7 +76,7 @@ window.onload = function () {
         chrome.storage.local.set({ 'hideNotMine': e.target.checked });
     };
 
-    // ---- Drag-to-edit settings (added in this fork) ----
+    // ---- Drag-to-edit settings ----
     const updateDragRows = enabled => {
         document.querySelectorAll('.drag-only').forEach(r => r.classList.toggle('hidden', !enabled))
     }

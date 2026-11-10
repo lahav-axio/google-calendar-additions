@@ -1,5 +1,6 @@
 // ==UserScript==
-// @name        Calendar Additions (based on Cal Merge by @HCAWN, itself forked from @imightbeAmy)
+// @name        Calendar Additions
+// @homepageURL https://github.com/lahav-axio/google-calendar-additions
 // @namespace   gcal-multical-event-merge
 // @include     https://www.google.com/calendar/*
 // @include     http://www.google.com/calendar/*
@@ -212,7 +213,7 @@ const mergeEventElements = events => {
 
 
 // ---------------------------------------------------------------------------
-// "My calendar only" mode (added in this fork)
+// "My calendar only" mode
 // Instead of blending duplicate events, keep only the copy that lives on your
 // own calendar and hide the copies from other calendars.
 // ---------------------------------------------------------------------------
