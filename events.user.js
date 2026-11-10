@@ -103,7 +103,12 @@ const calculatePosition = (event, parentPosition) => {
 
 const mergeEventElements = async events => {
     const getStyle = () => new Promise(res => chrome.storage.local.get("style", s => res(s.style)))
-    const fill_style = await getStyle()
+    let fill_style
+    try {
+        fill_style = await getStyle()
+    } catch (error) {
+        return // extension reloaded while this tab was open
+    }
     // disabling this as it changes the orders of the events making clicking on the now transparent divs not be in the correct order
     // events.sort((e1, e2) => dragType(e1) - dragType(e2));
     const colors = events.map(event => {
