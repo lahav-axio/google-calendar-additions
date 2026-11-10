@@ -376,7 +376,20 @@ function findMatchingString(eventSets, string_1, wildcard) {
     return null
 }
 
+// After the extension is reloaded or updated, the copy of this script already running in an open
+// tab is cut off from Chrome: every chrome.* call throws "Extension context invalidated".
+const extensionAlive = () => {
+    try {
+        return !!(chrome.runtime && chrome.runtime.id)
+    } catch (e) {
+        return false
+    }
+}
+
+let observer = null
+
 const merge = async mainCalender => {
+    if (!extensionAlive()) return
     const getWildcard = () =>
         new Promise((res, rej) => {
             chrome.storage.local.get("wildcard", s => {
@@ -394,9 +407,14 @@ const merge = async mainCalender => {
     } catch (error) {
         wildcard = ""
     }
-    const settings = await new Promise(res =>
-        chrome.storage.local.get(["mode", "myCalendars", "hideNotMine"], s => res(s || {}))
-    )
+    let settings
+    try {
+        settings = await new Promise(res =>
+            chrome.storage.local.get(["mode", "myCalendars", "hideNotMine"], s => res(s || {}))
+        )
+    } catch (error) {
+        return // extension reloaded while this tab was open; the new copy of the script takes over on reload
+    }
     const ownMode = settings.mode === "own_only"
     const myCalendars = ownMode ? getMyCalendars(settings.myCalendars) : []
 
@@ -471,6 +489,10 @@ const moveEvents = (events, from_top) => {
 }
 
 const init = mutationsList => {
+    if (!extensionAlive()) {
+        if (observer) observer.disconnect()
+        return
+    }
     mutationsList &&
         mutationsList
             .map(mutation => mutation.addedNodes[0] || mutation.target)
@@ -483,7 +505,7 @@ setTimeout(
         chrome.storage.local.get("disabled", storage => {
             console.log(`Calendar Additions: duplicate merging is ${storage.disabled ? "disabled" : "enabled"}`)
             if (!storage.disabled) {
-                const observer = new MutationObserver(init)
+                observer = new MutationObserver(init)
                 observer.observe(document.querySelector("body"), { childList: true, subtree: true, attributes: true })
             }
 

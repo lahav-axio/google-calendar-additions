@@ -42,7 +42,20 @@
     // ---- settings -------------------------------------------------------------------------
 
     const settings = { dragEdit: true, oauthClientId: "", detectedEmail: "" }
-    const isActive = () => settings.dragEdit !== false && !!(settings.oauthClientId || "").trim()
+    const isEnabled = () => settings.dragEdit !== false && !!(settings.oauthClientId || "").trim()
+
+    // After the extension is reloaded or updated, this copy of the script (still running in an
+    // already-open tab) is cut off from Chrome and can't save anything, so it must stand aside and
+    // leave dragging to Google until the page is reloaded.
+    const extensionAlive = () => {
+        try {
+            return !!(chrome.runtime && chrome.runtime.id)
+        } catch (e) {
+            return false
+        }
+    }
+    const isActive = () => isEnabled() && extensionAlive()
+    const STALE_MESSAGE = "Calendar Additions was updated. Reload this page to keep using it."
 
     try {
         chrome.storage.local.get(["dragEdit", "oauthClientId", "detectedEmail"], s => Object.assign(settings, s || {}))
@@ -508,8 +521,17 @@
         }
     }
 
+    let warnedStale = false
+
     const beginPress = e => {
-        if (!isActive() || e.button !== 0 || e.ctrlKey || e.metaKey) return false
+        if (e.button !== 0 || e.ctrlKey || e.metaKey || !isEnabled()) return false
+        if (!extensionAlive()) {
+            if (!warnedStale && findTimedEventAt(e)) {
+                warnedStale = true
+                toast(STALE_MESSAGE, { label: "Reload", run: () => window.location.reload() })
+            }
+            return false
+        }
         const found = findTimedEventAt(e)
         if (!found) {
             debug("no timed event under the pointer", e.target)
@@ -692,6 +714,7 @@
     }
 
     const describeError = err => {
+        if (err && /context invalidated/i.test(err.message || "")) return STALE_MESSAGE
         if (err && err.status === 403) return "You don't have permission to change this event."
         if (err && err.status === 404) return "Couldn't find this event through the Google Calendar API."
         return (err && err.message) || "Something went wrong."
