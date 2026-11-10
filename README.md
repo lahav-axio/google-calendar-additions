@@ -17,10 +17,10 @@ A Chrome extension that adds extra features to Google Calendar.
   Alt at any point during the drag to switch between the two.
 - Hold **Shift** while dragging to move in **30-minute steps**. Like Alt, it can be pressed or released mid-drag.
 - **Create events** by dragging on an empty part of the grid, with Alt or Shift for 5- or 30-minute steps. Google's
-  own popup opens with the exact times.
+  own popup opens as usual.
 
-Changing existing events needs a one-time Google Cloud setup; see [Drag to edit](#drag-to-edit) below. Creating
-events works without it.
+Changing events and saving exact 5- or 30-minute times need a one-time Google Cloud setup; see
+[Drag to edit](#drag-to-edit) below.
 
 The two groups of features have separate switches, so you can use either one on its own.
 
@@ -70,7 +70,7 @@ The popup has two sections.
 
 | Setting | What it does |
 |---|---|
-| **Enable** | Turns on drag to edit. Changing existing events also needs an API client ID; creating events works without one. |
+| **Enable** | Turns on drag to edit. Changing events and saving exact 5- or 30-minute times also need an API client ID. |
 | **API client ID** | The OAuth client ID from your Google Cloud project. See [Drag to edit](#drag-to-edit). |
 | **Google account → Connect** | Signs in to Google so the extension can save your changes. If you skip this, you're asked to sign in on your first drag. |
 
@@ -99,13 +99,16 @@ Creating an event:
 - Drag on an empty part of the day or week grid. A *(No title)* preview follows the pointer. Hold **Alt** or
   **Shift** for 5- or 30-minute steps. You can press or release them at any point, before or after you start
   dragging. You can also drag upwards.
-- When you let go, Google's own quick-create popup opens. If you used Alt or Shift, the exact start and end times
-  are filled in for you. Type a title and save as usual; Google saves the event itself.
+- When you let go, Google's own quick-create popup opens. Google's popup only does 15-minute steps, so it shows the
+  nearest 15 minutes, and a message tells you the exact times the event will get. Type a title and save as usual.
+  As soon as Google has saved the event, it's set to the exact times.
+- If you change the times in Google's popup yourself before saving, your times are kept. Closing the popup without
+  saving creates nothing.
 - Press **Esc** while dragging to cancel. A plain click on empty space works as before.
-- Creating events doesn't need the Google Cloud setup.
-- If the times can't be filled in, Google's popup keeps its 15-minute times and a message tells you, so you can
-  adjust them there. If Google's popup doesn't open at all, the full event editor opens with the exact times
-  instead, and plain drags are left to Google until you reload the page.
+- Setting the exact times needs the API client ID (see the setup below). Without it, events are created with
+  Google's 15-minute times.
+- If Google's popup doesn't open at all, the full event editor opens with the exact times instead, and plain drags
+  are left to Google until you reload the page.
 
 ### One-time setup (about 5 minutes)
 
@@ -142,10 +145,9 @@ browser.
   **Setup help**. Copy it again exactly, including the trailing `/`.
 - **The event jumps back after saving.** Google Calendar sometimes takes a moment to show changes made through
   the API. If it hasn't updated after about 30 seconds, a **Reload** button appears.
-- **The exact times don't get filled into Google's popup.** Google may have changed the popup. Run
-  `localStorage.setItem("calmerge-debug", "1")` in the DevTools console on calendar.google.com, reload, and create
-  an event with Alt again. Then copy the lines starting with `[Calendar Additions drag]` (they include the popup's
-  markup) into an issue.
+- **A new event keeps Google's 15-minute times.** Check that an **API client ID** is set and connected. To see
+  what happened, run `localStorage.setItem("calmerge-debug", "1")` in the DevTools console on
+  calendar.google.com, reload, create the event again, and look for lines starting with `[Calendar Additions drag]`.
 - **Alt+drag moves the browser window (Linux).** Some Linux desktops use Alt+drag to move windows. Change that
   shortcut in your desktop settings, or use the Super key for window moves.
 

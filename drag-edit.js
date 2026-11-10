@@ -6,8 +6,8 @@
 // - Hold Shift while dragging to move in 30-minute steps (Alt wins if both are held).
 // - Drag on empty space to create an event; Alt/Shift (pressed before or during the drag) give
 //   5- or 30-minute steps. On release the drag is handed to Google (rounded to its 15-minute
-//   steps) so Google's own quick-create popup opens, and the exact times are then put into the
-//   popup's start/end fields. Google saves the event, so this needs no API client id.
+//   steps) so Google's own quick-create popup opens. After the user saves there, the new event is
+//   set to the exact times through the API (needs the API client id).
 //
 // Google Calendar's own drag code only snaps to 15 minutes and has no start-time handle, so while
 // this feature is on the extension runs the whole drag itself (move, top edge, bottom edge) and
@@ -744,86 +744,72 @@
     const isGoogleDialog = el =>
         !el.closest(".calmerge-ui") && el.getClientRects().length > 0 && !!el.querySelector("input, [role='button']")
 
-    // The start/end time fields of Google's popup (shown after clicking its date/time line)
-    const findTimeInputs = dialog => {
-        const inputs = Array.from(dialog.querySelectorAll("input")).filter(i => i.getClientRects().length)
-        const byLabel = re => inputs.find(i => re.test(i.getAttribute("aria-label") || ""))
-        const start = byLabel(/start time/i)
-        const end = byLabel(/end time/i)
-        if (start && end) return { start, end }
-        const times = inputs.filter(i => SINGLE_RE.test(i.value) && !/\d{4}/.test(i.value))
-        return times.length >= 2 ? { start: times[0], end: times[1] } : null
-    }
-
-    const findTimeLine = dialog =>
-        Array.from(dialog.querySelectorAll('[role="button"], button, [tabindex]'))
-            .filter(el => {
-                const m = el.textContent.match(RANGE_RE)
-                return m && looksLikeTime(m[1] + m[3])
-            })
-            .sort((a, b) => a.textContent.length - b.textContent.length)[0]
-
-    const clickElement = el => {
-        const r = el.getBoundingClientRect()
-        const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 }
-        try {
-            el.dispatchEvent(new PointerEvent("pointerdown", { ...init, buttons: 1, pointerType: "mouse", isPrimary: true }))
-        } catch (err) {}
-        el.dispatchEvent(new MouseEvent("mousedown", { ...init, buttons: 1 }))
-        try {
-            el.dispatchEvent(new PointerEvent("pointerup", { ...init, buttons: 0, pointerType: "mouse", isPrimary: true }))
-        } catch (err) {}
-        el.dispatchEvent(new MouseEvent("mouseup", { ...init, buttons: 0 }))
-        el.dispatchEvent(new MouseEvent("click", { ...init, buttons: 0 }))
-    }
-
-    const normalizeTime = text => (text || "").replace(/[\s.]/g, "").toLowerCase()
-
-    // Type a time into one of Google's time fields the way a person would, then press Enter
-    const typeTime = async (input, date) => {
-        // Same format as what the field already shows (e.g. "12:00pm" or "12:00"), else like the page's chips
-        const token = (input.value.match(SINGLE_RE) || [])[0] || timeSample()[3]
-        const text = rewriteSingle(token, date, "UTC")
-        input.focus()
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, text)
-        input.dispatchEvent(new Event("input", { bubbles: true }))
-        input.dispatchEvent(new Event("change", { bubbles: true }))
-        const key = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true }
-        input.dispatchEvent(new KeyboardEvent("keydown", key))
-        input.dispatchEvent(new KeyboardEvent("keyup", key))
-        await sleep(120)
-        return text
-    }
-
-    // Put the exact start/end into Google's popup; true if it now shows them
-    const setPopupTimes = async (dialog, p, range) => {
-        const startDate = new Date(p.date + range.start * MINUTE)
-        const endDate = new Date(p.date + range.end * MINUTE)
-        let inputs = findTimeInputs(dialog)
-        if (!inputs) {
-            const line = findTimeLine(dialog)
-            debug("popup time line", line)
-            if (!line) return false
-            clickElement(line)
-            inputs = await waitFor(() => findTimeInputs(dialog), 800)
-        }
-        if (!inputs) return false
-        const wantStart = await typeTime(inputs.start, startDate)
-        inputs = findTimeInputs(dialog) || inputs // Google may redraw the fields
-        const wantEnd = await typeTime(inputs.end, endDate)
-        inputs = findTimeInputs(dialog) || inputs
-        inputs.end.blur()
-        const title = Array.from(dialog.querySelectorAll('input[type="text"], input:not([type])')).find(
-            i => i !== inputs.start && i !== inputs.end && /title/i.test(i.getAttribute("aria-label") || i.placeholder || "")
-        )
-        if (title) title.focus() // back to the title, where Google's popup starts
-        return normalizeTime(inputs.start.value) === normalizeTime(wantStart) && normalizeTime(inputs.end.value) === normalizeTime(wantEnd)
-    }
-
     const openFullEditor = (p, range) => {
         const url = eventEditUrl(p.date, range.start, range.end)
         debug("create in full editor", url)
         window.location.assign(url)
+    }
+
+    const eventIdsOnPage = () =>
+        new Set(
+            Array.from(document.querySelectorAll("[data-eventid]"))
+                .map(el => (decodeEventId(el.dataset.eventid || "") || {}).eventId)
+                .filter(Boolean)
+        )
+
+    // After the user saves in Google's popup, set the new event to the exact times (Google's popup
+    // only does 15-minute steps). Only if the event still has the 15-minute times Google was given,
+    // so times the user changed in the popup are kept.
+    const fixCreatedEvent = async (p, range, g, dialog, before) => {
+        const tried = new Set()
+        const startedAt = Date.now()
+        let closedAt = 0
+        for (;;) {
+            await sleep(300)
+            if (!dialog.isConnected || !dialog.getClientRects().length) closedAt = closedAt || Date.now()
+            if ((closedAt && Date.now() - closedAt > 10000) || Date.now() - startedAt > 10 * 60 * 1000) {
+                debug("no new event appeared after the popup closed; leaving it")
+                return
+            }
+            if (!closedAt) continue // still in Google's popup
+            const candidate = Array.from(document.querySelectorAll("[data-eventid]"))
+                .map(el => findTimedEvent(el))
+                .find(f => f && !before.has(f.eventId) && !tried.has(f.eventId) && columnDate(f.column) === p.date)
+            if (!candidate) continue
+            tried.add(candidate.eventId)
+            try {
+                const [event, tz] = await Promise.all([api("GET", eventPath(candidate.calendarId, candidate.eventId)), getCalendarTimezone()])
+                if (!hasTimes({ event })) continue
+                const s0 = new Date(event.start.dateTime)
+                const e0 = new Date(event.end.dateTime)
+                const d = new Date(p.date) // the column's date at midnight UTC
+                const sameDay = dayKey(s0, tz) === `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`
+                if (!sameDay || Math.round(minutesOfDay(s0, tz)) !== g.start || Math.round((e0 - s0) / MINUTE) !== g.end - g.start) {
+                    debug("new event's times were changed in the popup; keeping them", event.start, event.end)
+                    return
+                }
+                const start = addMinutes(s0, range.start - g.start)
+                const end = addMinutes(e0, range.end - g.end)
+                const field = (date, original) => (original.timeZone ? { dateTime: date.toISOString(), timeZone: original.timeZone } : { dateTime: date.toISOString() })
+                await api("PATCH", eventPath(candidate.calendarId, event.id || candidate.eventId), {
+                    query: { sendUpdates: "none" },
+                    body: { start: field(start, event.start), end: field(end, event.end) }
+                })
+                // Show the exact times right away (Google redraws the event later)
+                const q = { found: candidate, kind: "create" }
+                startPreview(q)
+                q.pxPerMin = candidate.column.getBoundingClientRect().height / (24 * 60)
+                showPreview(q, { dStartPx: (range.start - g.start) * q.pxPerMin, dEndPx: (range.end - g.end) * q.pxPerMin, dx: 0 })
+                writeTimes(q.timeTexts, start, end, tz)
+                keepPreview(q)
+                return
+            } catch (err) {
+                debug("couldn't set the new event's exact times", err)
+                if (err && err.status === 404) continue // e.g. Google's unsaved draft; keep looking
+                toast(`Couldn't set the new event to ${p.ghostTime.textContent}: ${describeError(err)}`)
+                return
+            }
+        }
     }
 
     const finishCreate = async p => {
@@ -834,6 +820,7 @@
         const g = { start: Math.floor(range.start / STEP) * STEP, end: Math.ceil(range.end / STEP) * STEP }
         if (g.end - g.start < STEP) g.end = g.start + STEP
         const before = new Set(document.querySelectorAll('[role="dialog"]'))
+        const eventsBefore = eventIdsOnPage()
         replayCreateDrag(p, g)
         const dialog = await waitFor(
             () => Array.from(document.querySelectorAll('[role="dialog"]')).reverse().find(d => !before.has(d) && isGoogleDialog(d)),
@@ -845,14 +832,12 @@
             return openFullEditor(p, range)
         }
         if (range.start === g.start && range.end === g.end) return // Google already has the exact times
-        const ok = await setPopupTimes(dialog, p, range).catch(err => {
-            debug("setting the popup's times failed", err)
-            return false
-        })
-        if (!ok) {
-            debug("couldn't set the popup's times; popup markup:", dialog.outerHTML.slice(0, 5000))
-            toast(`Couldn't put ${label} into Google's popup; please adjust the times there.`)
+        if (!isEnabled()) {
+            toast(`Google's popup uses 15-minute steps. To save events as ${label}, add an API client ID in the extension's settings.`)
+            return
         }
+        toast(`Google's popup shows the nearest 15 minutes. When you save, the event will be set to ${label}.`)
+        fixCreatedEvent(p, range, g, dialog, eventsBefore)
     }
 
     // Google never saw the press, so give it the press now and let the real release through

@@ -83,7 +83,7 @@ window.onload = function () {
 
     const showConnection = s => {
         const status = document.getElementById('connect_status')
-        if (!s.oauthClientId) status.textContent = 'Creating events works now. To change existing events by dragging, paste your API client ID.'
+        if (!s.oauthClientId) status.textContent = 'Paste your API client ID to change events by dragging and to save exact 5/30-minute times for new events.'
         else if (s.connectedAccount) status.textContent = `Connected as ${s.connectedAccount}.`
         else status.textContent = 'Not connected yet. Click Connect, or you\'ll be asked to sign in on your first drag.'
     }
