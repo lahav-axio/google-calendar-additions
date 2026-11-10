@@ -5,9 +5,9 @@
 //   Press or release Alt at any point during the drag to switch between the two.
 // - Hold Shift while dragging to move in 30-minute steps (Alt wins if both are held).
 // - Drag on empty space to create an event; Alt/Shift (pressed before or during the drag) give
-//   5- or 30-minute steps. On release a quick-create popup like Google's opens (title, Save,
-//   More options) and Save creates the event through the API. Without an API client id, only
-//   drags started with Alt/Shift are handled, and they open Google's full event editor instead.
+//   5- or 30-minute steps. On release the drag is handed to Google (rounded to its 15-minute
+//   steps) so Google's own quick-create popup opens, and the exact times are then put into the
+//   popup's start/end fields. Google saves the event, so this needs no API client id.
 //
 // Google Calendar's own drag code only snaps to 15 minutes and has no start-time handle, so while
 // this feature is on the extension runs the whole drag itself (move, top edge, bottom edge) and
@@ -34,7 +34,7 @@
     const DRAG_THRESHOLD = 4 // px of movement before a press becomes a drag
     const MIN_COLUMN_HEIGHT = 300 // px; day/week time-grid columns are much taller than month cells
     const HANDLE_BELOW = 8 // px below an event's bottom edge that still count as its resize handle
-    const PIN_TIMEOUT = 30000 // ms to wait for Google Calendar to draw a newly created event
+    const DIALOG_WAIT = 1500 // ms to wait for Google's quick-create popup after handing it the drag
     const MINUTE = 60 * 1000
     const DAY = 24 * 60 * MINUTE
 
@@ -365,34 +365,6 @@
                 box-shadow: 0 6px 10px rgba(0,0,0,.14), 0 1px 18px rgba(0,0,0,.12), 0 3px 5px rgba(0,0,0,.2);
             }
             .calmerge-create-ghost div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-            .calmerge-quick {
-                position: fixed; z-index: 2147483001; width: 400px; max-width: calc(100vw - 16px);
-                box-sizing: border-box; padding: 8px 16px 16px 24px; border-radius: 8px;
-                background: #fff; color: #3c4043; font: 14px/20px Roboto, Arial, sans-serif;
-                box-shadow: 0 24px 38px 3px rgba(0,0,0,.14), 0 9px 46px 8px rgba(0,0,0,.12), 0 11px 15px -7px rgba(0,0,0,.2);
-            }
-            .calmerge-quick-bar { display: flex; justify-content: flex-end; }
-            .calmerge-quick-close {
-                width: 32px; height: 32px; border: 0; border-radius: 50%; background: none; cursor: pointer;
-                color: #5f6368; font-size: 18px; line-height: 32px;
-            }
-            .calmerge-quick-close:hover { background: #f1f3f4; }
-            .calmerge-quick-title {
-                display: block; width: 100%; box-sizing: border-box; margin: 0; padding: 4px 0 6px;
-                border: 0; border-bottom: 1px solid #dadce0; outline: none; background: transparent;
-                color: #3c4043; font: 22px/28px "Google Sans", Roboto, Arial, sans-serif;
-            }
-            .calmerge-quick-title:focus { border-bottom: 2px solid #1a73e8; padding-bottom: 5px; }
-            .calmerge-quick-when { margin: 16px 0 24px; }
-            .calmerge-quick-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
-            .calmerge-quick-actions button {
-                border: 0; border-radius: 4px; cursor: pointer; padding: 8px 16px;
-                font: 500 14px "Google Sans", Roboto, Arial, sans-serif;
-            }
-            .calmerge-quick-more { background: none; color: #1a73e8; }
-            .calmerge-quick-more:hover { background: #f6fafe; }
-            .calmerge-quick-save { background: #1a73e8; color: #fff; padding: 8px 24px !important; }
-            .calmerge-quick-save:disabled { opacity: .6; cursor: default; }
             .calmerge-toast {
                 position: fixed; left: 24px; bottom: 24px; z-index: 2147483001; display: flex; gap: 16px;
                 align-items: center; max-width: 520px; padding: 14px 16px; border-radius: 4px;
@@ -629,11 +601,13 @@
         return null
     }
 
-    // With an API client id every drag on empty space is ours, so Alt/Shift can be pressed at any
-    // time and the event is created from our popup. Without one, only drags started with Alt/Shift
-    // are ours (they open Google's full editor); plain ones stay Google's own.
+    // Every drag on empty space is ours, so Alt/Shift can be pressed at any time. If handing a drag
+    // to Google ever fails to open its popup, plain drags are left to Google for the rest of the
+    // session (and Alt/Shift drags open the full editor).
+    let nativeCreateBroken = false
+
     const beginCreatePress = e => {
-        if (!(e.altKey || e.shiftKey || isEnabled()) || !extensionAlive()) return false
+        if (!(e.altKey || e.shiftKey || !nativeCreateBroken) || !extensionAlive()) return false
         if (e.target instanceof Element && e.target.closest('[data-eventid], [role="dialog"]')) return false
         const column = columnAt(e)
         if (!column) return false
@@ -706,149 +680,179 @@
         return `${window.location.origin}${base}/r/eventedit?dates=${stamp(start)}/${stamp(end)}`
     }
 
-    const finishCreate = p => {
-        const range = createRange(p)
-        placeCreateGhost(p, range)
-        if (isEnabled()) return openQuickCreate(p, range)
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+    const waitFor = async (test, timeout) => {
+        const until = Date.now() + timeout
+        for (;;) {
+            const value = test()
+            if (value || Date.now() > until) return value
+            await sleep(50)
+        }
+    }
+
+    // Google's events are synthesized from these; our own listeners ignore untrusted events
+    const fire = (type, target, x, y, buttons, p) => {
+        const init = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            view: window,
+            clientX: x,
+            clientY: y,
+            screenX: x + (p.downInit.screenX - p.downInit.clientX),
+            screenY: y + (p.downInit.screenY - p.downInit.clientY),
+            button: 0,
+            buttons,
+            pointerId: p.pointerId,
+            pointerType: "mouse",
+            isPrimary: true
+        }
+        const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent
+        target.dispatchEvent(new Ctor(type, init))
+    }
+
+    // Hand Google the same drag (from the middle of the first 15-minute slot to the middle of the
+    // last), so it opens its own quick-create popup for that range
+    const replayCreateDrag = (p, g) => {
+        const col = p.column.getBoundingClientRect()
+        const x = clamp(p.startX, col.left + 2, col.right - 2)
+        const yAt = minutes => col.top + minutes * p.pxPerMin
+        const targetAt = y => {
+            const el = y >= 0 && y < window.innerHeight ? document.elementFromPoint(x, y) : null
+            return el && p.column.contains(el) ? el : p.column
+        }
+        const y0 = yAt(g.start + STEP / 2)
+        const y1 = yAt(g.end - STEP / 2)
+        const t0 = targetAt(y0)
+        fire("pointerdown", t0, x, y0, 1, p)
+        fire("mousedown", t0, x, y0, 1, p)
+        for (let i = 1; i <= 4; i++) {
+            const y = y0 + ((y1 - y0) * i) / 4
+            const t = targetAt(y)
+            fire("pointermove", t, x, y, 1, p)
+            fire("mousemove", t, x, y, 1, p)
+        }
+        const t1 = targetAt(y1)
+        fire("pointerup", t1, x, y1, 0, p)
+        fire("mouseup", t1, x, y1, 0, p)
+        let common = t0
+        while (common && !common.contains(t1)) common = common.parentElement
+        fire("click", common || t1, x, y1, 0, p)
+    }
+
+    const isGoogleDialog = el =>
+        !el.closest(".calmerge-ui") && el.getClientRects().length > 0 && !!el.querySelector("input, [role='button']")
+
+    // The start/end time fields of Google's popup (shown after clicking its date/time line)
+    const findTimeInputs = dialog => {
+        const inputs = Array.from(dialog.querySelectorAll("input")).filter(i => i.getClientRects().length)
+        const byLabel = re => inputs.find(i => re.test(i.getAttribute("aria-label") || ""))
+        const start = byLabel(/start time/i)
+        const end = byLabel(/end time/i)
+        if (start && end) return { start, end }
+        const times = inputs.filter(i => SINGLE_RE.test(i.value) && !/\d{4}/.test(i.value))
+        return times.length >= 2 ? { start: times[0], end: times[1] } : null
+    }
+
+    const findTimeLine = dialog =>
+        Array.from(dialog.querySelectorAll('[role="button"], button, [tabindex]'))
+            .filter(el => {
+                const m = el.textContent.match(RANGE_RE)
+                return m && looksLikeTime(m[1] + m[3])
+            })
+            .sort((a, b) => a.textContent.length - b.textContent.length)[0]
+
+    const clickElement = el => {
+        const r = el.getBoundingClientRect()
+        const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 }
+        try {
+            el.dispatchEvent(new PointerEvent("pointerdown", { ...init, buttons: 1, pointerType: "mouse", isPrimary: true }))
+        } catch (err) {}
+        el.dispatchEvent(new MouseEvent("mousedown", { ...init, buttons: 1 }))
+        try {
+            el.dispatchEvent(new PointerEvent("pointerup", { ...init, buttons: 0, pointerType: "mouse", isPrimary: true }))
+        } catch (err) {}
+        el.dispatchEvent(new MouseEvent("mouseup", { ...init, buttons: 0 }))
+        el.dispatchEvent(new MouseEvent("click", { ...init, buttons: 0 }))
+    }
+
+    const normalizeTime = text => (text || "").replace(/[\s.]/g, "").toLowerCase()
+
+    // Type a time into one of Google's time fields the way a person would, then press Enter
+    const typeTime = async (input, date) => {
+        // Same format as what the field already shows (e.g. "12:00pm" or "12:00"), else like the page's chips
+        const token = (input.value.match(SINGLE_RE) || [])[0] || timeSample()[3]
+        const text = rewriteSingle(token, date, "UTC")
+        input.focus()
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, text)
+        input.dispatchEvent(new Event("input", { bubbles: true }))
+        input.dispatchEvent(new Event("change", { bubbles: true }))
+        const key = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true }
+        input.dispatchEvent(new KeyboardEvent("keydown", key))
+        input.dispatchEvent(new KeyboardEvent("keyup", key))
+        await sleep(120)
+        return text
+    }
+
+    // Put the exact start/end into Google's popup; true if it now shows them
+    const setPopupTimes = async (dialog, p, range) => {
+        const startDate = new Date(p.date + range.start * MINUTE)
+        const endDate = new Date(p.date + range.end * MINUTE)
+        let inputs = findTimeInputs(dialog)
+        if (!inputs) {
+            const line = findTimeLine(dialog)
+            debug("popup time line", line)
+            if (!line) return false
+            clickElement(line)
+            inputs = await waitFor(() => findTimeInputs(dialog), 800)
+        }
+        if (!inputs) return false
+        const wantStart = await typeTime(inputs.start, startDate)
+        inputs = findTimeInputs(dialog) || inputs // Google may redraw the fields
+        const wantEnd = await typeTime(inputs.end, endDate)
+        inputs = findTimeInputs(dialog) || inputs
+        inputs.end.blur()
+        const title = Array.from(dialog.querySelectorAll('input[type="text"], input:not([type])')).find(
+            i => i !== inputs.start && i !== inputs.end && /title/i.test(i.getAttribute("aria-label") || i.placeholder || "")
+        )
+        if (title) title.focus() // back to the title, where Google's popup starts
+        return normalizeTime(inputs.start.value) === normalizeTime(wantStart) && normalizeTime(inputs.end.value) === normalizeTime(wantEnd)
+    }
+
+    const openFullEditor = (p, range) => {
         const url = eventEditUrl(p.date, range.start, range.end)
-        debug("create", url)
+        debug("create in full editor", url)
         window.location.assign(url)
     }
 
-    // ---- quick-create popup ----------------------------------------------------------------------
-
-    let quick = null // the open popup
-    const pendingCreates = new Set() // saved events whose preview stays until Google draws them
-
-    const wallClock = (date, minutes) => {
-        const d = new Date(date + minutes * MINUTE)
-        return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00`
-    }
-
-    const openQuickCreate = (p, range) => {
-        injectStyles()
-        const el = document.createElement("div")
-        el.className = "calmerge-quick calmerge-ui"
-        el.setAttribute("role", "dialog")
-        el.setAttribute("aria-label", "Create event")
-        el.innerHTML = `
-            <div class="calmerge-quick-bar"><button class="calmerge-quick-close" type="button" aria-label="Close" title="Close">&#x2715;</button></div>
-            <input class="calmerge-quick-title" type="text" placeholder="Add title" aria-label="Add title" />
-            <div class="calmerge-quick-when"></div>
-            <div class="calmerge-quick-actions">
-                <button class="calmerge-quick-more" type="button">More options</button>
-                <button class="calmerge-quick-save" type="button">Save</button>
-            </div>`
-        const day = new Date(p.date).toLocaleDateString(undefined, { timeZone: "UTC", weekday: "long", month: "long", day: "numeric" })
-        el.querySelector(".calmerge-quick-when").textContent = `${day} · ${p.ghostTime.textContent}`
-        document.body.appendChild(el)
-
-        // Next to the preview, like Google's popup
-        const g = p.ghost.getBoundingClientRect()
-        const w = el.offsetWidth
-        const h = el.offsetHeight
-        let left = g.right + 12
-        if (left + w > window.innerWidth - 8) left = g.left - w - 12
-        el.style.left = `${clamp(left, 8, Math.max(window.innerWidth - w - 8, 8))}px`
-        el.style.top = `${clamp(g.top, 8, Math.max(window.innerHeight - h - 8, 8))}px`
-
-        const title = el.querySelector(".calmerge-quick-title")
-        const saveButton = el.querySelector(".calmerge-quick-save")
-        quick = { p, range, el, title, saveButton, saving: false }
-        title.addEventListener("input", () => (p.ghost.firstChild.textContent = title.value.trim() || "(No title)"))
-        title.addEventListener("keydown", e => {
-            if (e.key === "Enter") saveQuickCreate()
-            if (e.key === "Escape") closeQuickCreate()
+    const finishCreate = async p => {
+        const range = createRange(p)
+        const label = p.ghostTime.textContent
+        p.ghost.remove()
+        // Google's own steps: the 15-minute slots covering the range
+        const g = { start: Math.floor(range.start / STEP) * STEP, end: Math.ceil(range.end / STEP) * STEP }
+        if (g.end - g.start < STEP) g.end = g.start + STEP
+        const before = new Set(document.querySelectorAll('[role="dialog"]'))
+        replayCreateDrag(p, g)
+        const dialog = await waitFor(
+            () => Array.from(document.querySelectorAll('[role="dialog"]')).reverse().find(d => !before.has(d) && isGoogleDialog(d)),
+            DIALOG_WAIT
+        )
+        if (!dialog) {
+            debug("Google's quick-create popup didn't open; using the full editor from now on")
+            nativeCreateBroken = true
+            return openFullEditor(p, range)
+        }
+        if (range.start === g.start && range.end === g.end) return // Google already has the exact times
+        const ok = await setPopupTimes(dialog, p, range).catch(err => {
+            debug("setting the popup's times failed", err)
+            return false
         })
-        el.addEventListener("keydown", e => e.key === "Escape" && closeQuickCreate())
-        el.querySelector(".calmerge-quick-close").addEventListener("click", () => closeQuickCreate())
-        el.querySelector(".calmerge-quick-more").addEventListener("click", () => {
-            const text = title.value.trim()
-            window.location.assign(eventEditUrl(p.date, range.start, range.end) + (text ? `&text=${encodeURIComponent(text)}` : ""))
-        })
-        saveButton.addEventListener("click", () => saveQuickCreate())
-        title.focus()
-    }
-
-    const closeQuickCreate = () => {
-        if (!quick) return
-        const q = quick
-        quick = null
-        q.el.remove()
-        if (!q.saved) q.p.ghost.remove()
-    }
-
-    const saveQuickCreate = async () => {
-        const q = quick
-        if (!q || q.saving) return
-        q.saving = true
-        q.saveButton.disabled = true
-        q.saveButton.textContent = "Saving…"
-        try {
-            const tz = await getCalendarTimezone()
-            const summary = q.title.value.trim()
-            const created = await api("POST", "/calendars/primary/events", {
-                body: {
-                    summary,
-                    start: { dateTime: wallClock(q.p.date, q.range.start), timeZone: tz },
-                    end: { dateTime: wallClock(q.p.date, q.range.end), timeZone: tz }
-                }
-            })
-            q.saved = true
-            if (quick === q) closeQuickCreate()
-            const pending = keepCreatedPreview(q.p, q.range, created.id)
-            toast("Event created", {
-                label: "Undo",
-                run: () =>
-                    api("DELETE", `/calendars/primary/events/${encodeURIComponent(created.id)}`).then(
-                        () => {
-                            pending.done()
-                            toast("Event deleted. Reload Google Calendar if it still shows it.")
-                        },
-                        err => toast(`Couldn't undo: ${describeError(err)}`)
-                    )
-            })
-        } catch (err) {
-            q.saving = false
-            q.saveButton.disabled = false
-            q.saveButton.textContent = "Save"
-            toast(describeError(err))
+        if (!ok) {
+            debug("couldn't set the popup's times; popup markup:", dialog.outerHTML.slice(0, 5000))
+            toast(`Couldn't put ${label} into Google's popup; please adjust the times there.`)
         }
-    }
-
-    // Keep the preview where the new event will appear until Google draws it (then remove it, so
-    // the event is never shown twice)
-    const keepCreatedPreview = (p, range, eventId) => {
-        const startedAt = Date.now()
-        const entry = {
-            p,
-            range,
-            done: () => {
-                pendingCreates.delete(entry)
-                p.ghost.remove()
-            }
-        }
-        pendingCreates.add(entry)
-        const drawn = () =>
-            Array.from(document.querySelectorAll("[data-eventid]")).some(el => {
-                const ids = decodeEventId(el.dataset.eventid || "")
-                return ids && ids.eventId === eventId
-            })
-        const check = () => {
-            if (!pendingCreates.has(entry)) return
-            if (drawn()) return entry.done()
-            if (Date.now() - startedAt > PIN_TIMEOUT) {
-                entry.done()
-                toast("Event created. Reload Google Calendar if it doesn't show up yet.", {
-                    label: "Reload",
-                    run: () => window.location.reload()
-                })
-                return
-            }
-            setTimeout(check, 400)
-        }
-        setTimeout(check, 400)
-        return entry
     }
 
     // Google never saw the press, so give it the press now and let the real release through
@@ -1084,7 +1088,6 @@
     on("pointerdown", e => {
         // Our own popup, dialog and messages are not part of the calendar
         if (e.target instanceof Element && e.target.closest(".calmerge-ui")) return
-        if (quick && !quick.saving) closeQuickCreate() // a press outside the popup closes it, like Google's
         swallowUntilUp = false
         if (press) cancelDrag()
         if (beginPress(e)) e.stopImmediatePropagation()
@@ -1233,8 +1236,6 @@
         "scroll",
         () => {
             if (press && press.dragging) render()
-            if (quick) placeCreateGhost(quick.p, quick.range)
-            pendingCreates.forEach(entry => placeCreateGhost(entry.p, entry.range))
         },
         true
     )
