@@ -3,6 +3,7 @@
 // - Drag an event's TOP edge to change its start time (Google only lets you drag the bottom edge).
 // - Hold Alt (Option on a Mac) while dragging to move in 5-minute steps instead of 15.
 //   Press or release Alt at any point during the drag to switch between the two.
+// - Hold Shift while dragging to move in 30-minute steps (Alt wins if both are held).
 //
 // Google Calendar's own drag code only snaps to 15 minutes and has no start-time handle, so while
 // this feature is on the extension runs the whole drag itself (move, top edge, bottom edge) and
@@ -24,6 +25,8 @@
 
     const STEP = 15 // minutes, like Google Calendar
     const FINE_STEP = 5 // minutes, while Alt is held
+    const COARSE_STEP = 30 // minutes, while Shift is held
+    const stepFor = p => (p.alt ? FINE_STEP : p.shift ? COARSE_STEP : STEP)
     const DRAG_THRESHOLD = 4 // px of movement before a press becomes a drag
     const MIN_COLUMN_HEIGHT = 300 // px; day/week time-grid columns are much taller than month cells
     const HANDLE_BELOW = 8 // px below an event's bottom edge that still count as its resize handle
@@ -506,7 +509,7 @@
     }
 
     const beginPress = e => {
-        if (!isActive() || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return false
+        if (!isActive() || e.button !== 0 || e.ctrlKey || e.metaKey) return false
         const found = findTimedEventAt(e)
         if (!found) {
             debug("no timed event under the pointer", e.target)
@@ -532,6 +535,7 @@
                 button: e.button,
                 buttons: e.buttons,
                 altKey: e.altKey,
+                shiftKey: e.shiftKey,
                 pointerId: e.pointerId,
                 pointerType: e.pointerType,
                 isPrimary: e.isPrimary
@@ -541,6 +545,7 @@
             startYInCol: e.clientY - colRect.top,
             pxPerMin: colRect.height / (24 * 60),
             alt: e.altKey,
+            shift: e.shiftKey,
             lastX: e.clientX,
             lastY: e.clientY,
             dragging: false
@@ -622,7 +627,7 @@
 
     // New start/end for the current pointer position
     const computeTimes = (p, { minutes, days }) => {
-        const step = p.alt ? FINE_STEP : STEP
+        const step = stepFor(p)
         const { event, tz } = p.data
         const s0 = new Date(event.start.dateTime)
         const e0 = new Date(event.end.dateTime)
@@ -648,7 +653,7 @@
         const p = press
         if (!p || !p.dragging) return
         const move = rawMovement(p)
-        const step = p.alt ? FINE_STEP : STEP
+        const step = stepFor(p)
         let dStart = 0
         let dEnd = 0
         if (hasTimes(p.data)) {
@@ -799,6 +804,7 @@
             press.alt = e.altKey
             if (e.altKey) swallowAltKeyUp = true
         }
+        press.shift = e.shiftKey
         render()
     })
 
@@ -825,6 +831,7 @@
         press.lastX = e.clientX
         press.lastY = e.clientY
         press.alt = e.altKey
+        press.shift = e.shiftKey
         finishDrag()
     })
 
@@ -869,10 +876,26 @@
                 press.alt = true
                 render()
             }
+        } else if (e.key === "Shift") {
+            // Shift switches to 30-minute steps
+            e.stopImmediatePropagation()
+            if (!press.shift) {
+                press.shift = true
+                render()
+            }
         }
     })
 
     on("keyup", e => {
+        if (e.key === "Shift") {
+            if (!press) return
+            e.stopImmediatePropagation()
+            if (press.shift) {
+                press.shift = false
+                render()
+            }
+            return
+        }
         if (e.key !== "Alt") return
         if (swallowAltKeyUp || press) {
             e.stopImmediatePropagation()
