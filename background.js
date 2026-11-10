@@ -28,7 +28,7 @@ const readCachedToken = async () => {
 const authorize = async ({ interactive, loginHint }) => {
     const { oauthClientId } = await chrome.storage.local.get("oauthClientId")
     if (!oauthClientId) {
-        throw new ApiError("Add your Google API client id in the Cal Merge popup first.", 0, "NO_CLIENT_ID")
+        throw new ApiError("Add your Google API client id in the Calendar Additions popup first.", 0, "NO_CLIENT_ID")
     }
     const url = new URL("https://accounts.google.com/o/oauth2/v2/auth")
     url.searchParams.set("client_id", oauthClientId.trim())

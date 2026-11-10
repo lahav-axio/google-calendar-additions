@@ -4,9 +4,10 @@ window.onload = function () {
     const getStyle = () => new Promise(res => chrome.storage.local.get('style', (s) => res(s.style)));
     const getWildcard = () => new Promise(res => chrome.storage.local.get('wildcard', (s) => res(s.wildcard)));
 
-    const setIcon = (disabled) => chrome.action.setIcon({
-        path: disabled ? "icon-disabled.png" : "icon.png"
-    });
+    const setIcon = (disabled) => {
+        const name = disabled ? 'icon-disabled' : 'icon'
+        chrome.action.setIcon({ path: { 16: `icons/${name}-16.png`, 32: `icons/${name}-32.png` } });
+    };
 
     const setDropdown = (id, value) => {
         let element = document.getElementById(id);

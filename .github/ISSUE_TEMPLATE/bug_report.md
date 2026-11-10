@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help Cal Merge Improve
+about: Create a report to help improve Calendar Additions
 title: "[BUG]"
 labels: ''
 assignees: ''

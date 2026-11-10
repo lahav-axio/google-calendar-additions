@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
     <head>
-        <title>Cal Merge</title>
+        <title>Calendar Additions</title>
         <script src="index.js"></script>
     </head>
     <style>
@@ -12,6 +12,23 @@
         h1 {
             margin: 0;
             text-align: center;
+            font-size: 22px;
+        }
+        .logo {
+            display: block;
+            margin: 0 auto 6px;
+        }
+        h2 {
+            margin: 16px 0 0;
+            padding-bottom: 2px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #4f46e5;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        h2 + .table {
+            margin-top: 4px;
         }
         h4 {
             margin: 0;
@@ -71,10 +88,11 @@
     </style>
     <body>
         <p id="version"></p>
-        <h1>Cal Merge for <br />Google Calendar<sup style="font-size: 50%">TM</sup></h1>
-        <h5>+ My Calendar mode (custom fork)</h5>
-        <h4>By <a href="https://github.com/hcawn/gcal-multical-event-merge/" target="_blank" style="color: black">HCAWN</a></h4>
-        <h5>Forked from <a href="https://github.com/imightbeamy/gcal-multical-event-merge" target="_blank" style="color: black">imightbeamy</a></h5>
+        <img class="logo" src="icons/icon-48.png" width="48" height="48" alt="" />
+        <h1>Calendar Additions</h1>
+        <h5>for Google Calendar<sup style="font-size: 70%">TM</sup></h5>
+        <h5 style="font-weight: normal; margin-top: 4px">Based on <a href="https://github.com/hcawn/gcal-multical-event-merge/" target="_blank" style="color: black">Cal Merge</a> by HCAWN, forked from <a href="https://github.com/imightbeamy/gcal-multical-event-merge" target="_blank" style="color: black">imightbeamy</a></h5>
+        <h2>Duplicate events</h2>
         <div class="table">
             <div class="row">
                 <div class="cell left">Enable</div>
@@ -125,8 +143,11 @@
                     <input id="wildcard_value" style="width: 150px" type="text" placeholder="wildcard" value="busy" />
                 </div>
             </div>
+        </div>
+        <h2>Drag to edit</h2>
+        <div class="table">
             <div class="row">
-                <div class="cell left" title="Drag an event's top edge to change its start time.&#10;Hold Alt (Option on a Mac) while dragging for 5-minute steps instead of 15.&#10;Needs a Google API client id (see the README).">Drag to edit</div>
+                <div class="cell left" title="Drag an event's top edge to change its start time.&#10;Hold Alt (Option on a Mac) while dragging for 5-minute steps instead of 15.&#10;Needs a Google API client id (see the README).">Enable</div>
                 <div class="cell right">
                     <input id="toggle_drag_edit" type="checkbox" />
                 </div>

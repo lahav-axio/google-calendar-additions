@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name        Cal Merge + My Calendar (fork of Cal Merge by @HCAWN, itself forked from @imightbeAmy)
+// @name        Calendar Additions (based on Cal Merge by @HCAWN, itself forked from @imightbeAmy)
 // @namespace   gcal-multical-event-merge
 // @include     https://www.google.com/calendar/*
 // @include     http://www.google.com/calendar/*
@@ -441,7 +441,7 @@ const merge = async mainCalender => {
         if (ownMode) {
             if (!loggedCalendars) {
                 loggedCalendars = true
-                console.log("Cal merge (my calendar mode): my calendars =", myCalendars, "example event calendar =", getEventCalendar(events[0]))
+                console.log("Calendar Additions (my calendar mode): my calendars =", myCalendars, "example event calendar =", getEventCalendar(events[0]))
             }
             const allHidden = showOwnOnly(events, myCalendars, settings.hideNotMine)
             if (allHidden) return
@@ -481,7 +481,7 @@ const init = mutationsList => {
 setTimeout(
     () =>
         chrome.storage.local.get("disabled", storage => {
-            console.log(`Cal merge is ${storage.disabled ? "disabled" : "enabled"}`)
+            console.log(`Calendar Additions: duplicate merging is ${storage.disabled ? "disabled" : "enabled"}`)
             if (!storage.disabled) {
                 const observer = new MutationObserver(init)
                 observer.observe(document.querySelector("body"), { childList: true, subtree: true, attributes: true })

@@ -1,26 +1,33 @@
-Cal Merge + My Calendar for Google Calendar™
-=============================================
+<img src="icons/icon-128.png" width="64" height="64" alt="" align="right" />
 
-A fork of [HCAWN's Cal Merge](https://github.com/HCAWN/gcal-multical-event-merge) (itself forked from
-[@imightbeamy's repo](https://github.com/imightbeamy/gcal-multical-event-merge)) that adds a second mode and
-finer control when dragging events.
+Calendar Additions for Google Calendar™
+=======================================
 
-The original extension **merges** the same event on multiple Google Calendars into one striped, multi-coloured
-event. This fork adds a **"My calendar only"** mode. When an event shows up on several calendars, you see only the
-copy on *your* calendar. The other copies are hidden and your copy fills their space.
+A Chrome extension that adds extra features to Google Calendar. It started as a fork of
+[HCAWN's Cal Merge](https://github.com/HCAWN/gcal-multical-event-merge) (itself forked from
+[@imightbeamy's repo](https://github.com/imightbeamy/gcal-multical-event-merge)), and keeps all of Cal Merge's
+features.
 
-It also adds **drag to edit** in the day and week views:
+**Duplicate events**
+- **Merge** (from Cal Merge): the same event on several of your calendars is shown as one striped,
+  multi-coloured event.
+- **My calendar only**: when an event shows up on several calendars, you see only the copy on *your* calendar.
+  The other copies are hidden and your copy fills their space.
+
+**Drag to edit**, in the day and week views:
 - Drag an event's **top edge** to change its start time, just like dragging the bottom edge changes its end time.
 - Hold **Alt** (**Option** on a Mac) while dragging to move in **5-minute steps** instead of 15. Press or release
   Alt at any point during the drag to switch between the two.
 
 Drag to edit needs a one-time Google Cloud setup; see [Drag to edit](#drag-to-edit) below.
 
+The two groups of features have separate switches, so you can use either one on its own.
+
 ![examples](images/examples.jpg)
 
 ## Installation
 
-This fork is not on the Chrome Web Store, so you install it as an unpacked extension. This works in Chrome and
+Calendar Additions is not on the Chrome Web Store, so you install it as an unpacked extension. This works in Chrome and
 in Chromium-based browsers such as Edge, Brave and Arc.
 
 1. **Get the code.** Either clone the repo:
@@ -32,10 +39,12 @@ in Chromium-based browsers such as Edge, Brave and Arc.
 2. **Open the extensions page.** Go to `chrome://extensions` (in Edge, `edge://extensions`).
 3. **Turn on Developer mode** with the toggle in the top-right corner.
 4. **Click "Load unpacked"** and select the folder that contains `manifest.json`, which is the repo's root folder.
-5. **Disable the Web Store version of Cal Merge** if you have it installed, so the two don't run at the same time.
+5. **Disable Cal Merge** if you have the Web Store version installed. Calendar Additions includes all of its
+   features, and the two shouldn't run at the same time.
 6. **Pin the extension.** Click the puzzle-piece icon in the toolbar, then click the pin next to
-   *Cal Merge + My Calendar*.
-7. **Configure it.** Click the extension icon, set **Mode** to *My calendar only*, then reload Google Calendar.
+   *Calendar Additions for Google Calendar™*.
+7. **Configure it.** Click the extension icon to open the settings. For example, set **Mode** to
+   *My calendar only*, then reload Google Calendar.
 
 ### Updating
 Run `git pull` in the folder, or download the ZIP again and replace the folder's contents. Then click the
@@ -43,15 +52,24 @@ Run `git pull` in the folder, or download the ZIP again and replace the folder's
 
 ## Settings
 
+The popup has two sections.
+
+**Duplicate events**
+
 | Setting | What it does |
 |---|---|
-| **Enable** | Turns merging (or *My calendar only* mode) on or off. Drag to edit has its own switch. |
+| **Enable** | Turns merging (or *My calendar only* mode) on or off. |
 | **Mode** | *Merge (blend colours)* is the original behaviour. *My calendar only* shows only your copy of duplicated events. |
 | **My calendar** | Shown in *My calendar only* mode. Enter your calendar id, which is usually your email. You can enter several, separated by commas. Leave it blank to auto-detect the signed-in account. |
 | **Hide events not on my calendar** | Shown in *My calendar only* mode. Also hides events that don't appear on your calendar at all. When off, only duplicates are collapsed. |
 | **Style** | Shown in *Merge* mode. Sets the gradient style for merged events. |
 | **Wildcard** | Events whose title contains this word (e.g. `busy`) are matched with any other event at the same time. Use `\|` to give several words. This setting works in both modes. |
-| **Drag to edit** | Turns on top-edge dragging and Alt for 5-minute steps. It works independently of **Enable**, and only takes effect once an API client ID is set. |
+
+**Drag to edit**
+
+| Setting | What it does |
+|---|---|
+| **Enable** | Turns on drag to edit. It only takes effect once an API client ID is set. |
 | **API client ID** | The OAuth client ID from your Google Cloud project. See [Drag to edit](#drag-to-edit). |
 | **Google account → Connect** | Signs in to Google so the extension can save your changes. If you skip this, you're asked to sign in on your first drag. |
 
@@ -84,12 +102,12 @@ Cloud project, which is free.
    one).
 2. Open **APIs & Services → Library**, search for **Google Calendar API**, and click **Enable**.
 3. Open **Google Auth Platform** (called **OAuth consent screen** in older consoles) and click **Get started**.
-   Give the app a name such as *Cal Merge*, and choose the audience:
+   Give the app a name such as *Calendar Additions*, and choose the audience:
    - **Internal** if you use a Google Workspace account. Only people in your organisation can use it, and Google
      doesn't need to review it.
    - **External** for a personal @gmail.com account. Leave it in *Testing* and add your own email under
      **Test users**.
-4. Open the extension's popup, turn on **Drag to edit**, open **Setup help** and copy the redirect URI. It looks
+4. Open the extension's popup, turn on **Drag to edit → Enable**, open **Setup help** and copy the redirect URI. It looks
    like `https://<extension-id>.chromiumapp.org/`.
 5. Back in the console, go to **Clients → Create client**. Choose **Web application** as the application type,
    paste the redirect URI under **Authorized redirect URIs**, and click **Create**.
@@ -104,7 +122,7 @@ browser.
 > redirect URI changes: copy the new one from **Setup help** and add it to your OAuth client.
 
 ### Troubleshooting drag to edit
-- **Dragging behaves exactly like before.** Check that **Drag to edit** is on and an **API client ID** is set,
+- **Dragging behaves exactly like before.** Check that **Drag to edit → Enable** is on and an **API client ID** is set,
   then reload Google Calendar.
 - **"redirect_uri_mismatch" during sign-in.** The redirect URI on your OAuth client doesn't match the one in
   **Setup help**. Copy it again exactly, including the trailing `/`.
@@ -124,7 +142,7 @@ signed-in account. If no copy can be identified as yours, duplicates are still c
 ### Troubleshooting
 - **The wrong copy stays visible, or nothing changes.** Open DevTools on calendar.google.com (F12, then the
   Console tab). Look for the log line
-  `Cal merge (my calendar mode): my calendars = [...] example event calendar = ...`.
+  `Calendar Additions (my calendar mode): my calendars = [...] example event calendar = ...`.
   If the ids in that line don't match, copy your calendar's exact id from the log into **My calendar**.
 - **Changes to settings don't seem to apply.** Settings changes reload the calendar tab automatically. If one
   doesn't, reload the tab yourself.
@@ -133,10 +151,10 @@ signed-in account. If no copy can be identified as yours, duplicates are still c
 
 ## Build
 
-Run `build` (macOS/Linux) or `build_windows.bat` to create a zip of the extension.
+Run `build` (macOS/Linux) or `build_windows.bat` to create `calendar-additions.zip`.
 
 ## License
 
-GPL-3.0, the same as the upstream project. See [LICENSE](LICENSE).
+GPL-3.0, the same as Cal Merge. See [LICENSE](LICENSE).
 
 *Google Calendar is a trademark of Google LLC. This project is not affiliated with Google.*

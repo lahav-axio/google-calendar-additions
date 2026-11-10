@@ -34,7 +34,7 @@
     try {
         debugEnabled = window.localStorage.getItem("calmerge-debug") === "1"
     } catch (e) {}
-    const debug = (...args) => debugEnabled && console.log("[Cal Merge drag]", ...args)
+    const debug = (...args) => debugEnabled && console.log("[Calendar Additions drag]", ...args)
 
     // ---- settings -------------------------------------------------------------------------
 
