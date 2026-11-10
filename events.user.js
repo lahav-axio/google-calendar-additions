@@ -101,14 +101,8 @@ const calculatePosition = (event, parentPosition) => {
     }
 }
 
-const mergeEventElements = async events => {
-    const getStyle = () => new Promise(res => chrome.storage.local.get("style", s => res(s.style)))
-    let fill_style
-    try {
-        fill_style = await getStyle()
-    } catch (error) {
-        return // extension reloaded while this tab was open
-    }
+const mergeEventElements = events => {
+    const fill_style = fillOptions[config.style] ? config.style : "vertical_bands"
     // disabling this as it changes the orders of the events making clicking on the now transparent divs not be in the correct order
     // events.sort((e1, e2) => dragType(e1) - dragType(e2));
     const colors = events.map(event => {
@@ -393,33 +387,16 @@ const extensionAlive = () => {
 
 let observer = null
 
-const merge = async mainCalender => {
-    if (!extensionAlive()) return
-    const getWildcard = () =>
-        new Promise((res, rej) => {
-            chrome.storage.local.get("wildcard", s => {
-                if (chrome.runtime.lastError) {
-                    rej(chrome.runtime.lastError)
-                } else {
-                    res(s.wildcard)
-                }
-            })
-        })
+// Settings, read once when the page loads (any change reloads the page, see below). Merging must
+// not wait for chrome.storage: when Google redraws events (e.g. when you click one), the merge has
+// to be re-applied before the browser paints, or the copies flash side by side for a frame.
+let config = null
+const CONFIG_KEYS = ["disabled", "style", "wildcard", "mode", "myCalendars", "hideNotMine"]
 
-    let wildcard
-    try {
-        wildcard = await getWildcard()
-    } catch (error) {
-        wildcard = ""
-    }
-    let settings
-    try {
-        settings = await new Promise(res =>
-            chrome.storage.local.get(["mode", "myCalendars", "hideNotMine"], s => res(s || {}))
-        )
-    } catch (error) {
-        return // extension reloaded while this tab was open; the new copy of the script takes over on reload
-    }
+const merge = mainCalender => {
+    if (!config || !extensionAlive()) return
+    const wildcard = config.wildcard
+    const settings = config
     const ownMode = settings.mode === "own_only"
     const myCalendars = ownMode ? getMyCalendars(settings.myCalendars) : []
 
@@ -493,25 +470,43 @@ const moveEvents = (events, from_top) => {
     }
 }
 
+const CONTAINERS = '[role="main"], [role="dialog"], [role="grid"]'
+const addsEvents = mutation =>
+    mutation.type === "childList" &&
+    Array.from(mutation.addedNodes).some(
+        n => n.nodeType === 1 && (n.matches("[data-eventid]") || n.querySelector("[data-eventid]"))
+    )
+
+// Runs before the browser paints, so merging here means a redraw by Google is never seen unmerged
 const init = mutationsList => {
     if (!extensionAlive()) {
         if (observer) observer.disconnect()
         return
     }
-    mutationsList &&
-        mutationsList
-            .map(mutation => mutation.addedNodes[0] || mutation.target)
-            .filter(node => node.matches && node.matches('[role="main"], [role="dialog"], [role="grid"]'))
-            .map(merge)
+    const roots = new Set()
+    mutationsList.forEach(mutation => {
+        const node = mutation.addedNodes[0] || mutation.target
+        if (node.matches && node.matches(CONTAINERS)) roots.add(node)
+        else if (addsEvents(mutation)) {
+            // Google redrew some events without touching the containers
+            const root = mutation.target.closest && mutation.target.closest(CONTAINERS)
+            if (root) roots.add(root)
+        }
+    })
+    roots.forEach(merge)
+    // Drop the mutations our own restyling just caused, so they don't trigger another pass
+    if (observer) observer.takeRecords()
 }
 
 setTimeout(
     () =>
-        chrome.storage.local.get("disabled", storage => {
-            console.log(`Calendar Additions: duplicate merging is ${storage.disabled ? "disabled" : "enabled"}`)
-            if (!storage.disabled) {
+        chrome.storage.local.get(CONFIG_KEYS, storage => {
+            config = storage || {}
+            console.log(`Calendar Additions: duplicate merging is ${config.disabled ? "disabled" : "enabled"}`)
+            if (!config.disabled) {
                 observer = new MutationObserver(init)
                 observer.observe(document.querySelector("body"), { childList: true, subtree: true, attributes: true })
+                document.querySelectorAll('[role="main"]').forEach(merge)
             }
 
             chrome.storage.onChanged.addListener(changes => {
