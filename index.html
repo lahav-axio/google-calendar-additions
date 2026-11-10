@@ -49,6 +49,18 @@
         .hidden {
             display: none;
         }
+        .note {
+            margin: 8px 0 0;
+            font-size: 11px;
+            color: #555;
+            word-break: break-word;
+        }
+        .note input {
+            width: 100%;
+            box-sizing: border-box;
+            font-size: 10px;
+            cursor: text;
+        }
         #version {
             position: absolute;
             top: 0;
@@ -113,6 +125,31 @@
                     <input id="wildcard_value" style="width: 150px" type="text" placeholder="wildcard" value="busy" />
                 </div>
             </div>
+            <div class="row">
+                <div class="cell left" title="Drag an event's top edge to change its start time.&#10;Needs a Google API client id (see the README).">Drag to edit</div>
+                <div class="cell right">
+                    <input id="toggle_drag_edit" type="checkbox" />
+                </div>
+            </div>
+            <div class="row drag-only">
+                <div class="cell left" title="OAuth client id from Google Cloud, ending in .apps.googleusercontent.com.&#10;Setup steps are in the README.">API client ID</div>
+                <div class="cell right">
+                    <input id="oauth_client_id" style="width: 150px" type="text" placeholder="….apps.googleusercontent.com" />
+                </div>
+            </div>
+            <div class="row drag-only">
+                <div class="cell left">Google account</div>
+                <div class="cell right">
+                    <button id="connect_google">Connect</button>
+                </div>
+            </div>
         </div>
+        <p id="connect_status" class="note drag-only"></p>
+        <details class="note drag-only">
+            <summary>Setup help</summary>
+            Add this as an authorized redirect URI on your OAuth client:
+            <input id="redirect_uri" type="text" readonly />
+            Full steps are in the README.
+        </details>
     </body>
 </html>

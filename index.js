@@ -75,6 +75,53 @@ window.onload = function () {
         chrome.storage.local.set({ 'hideNotMine': e.target.checked });
     };
 
+    // ---- Drag-to-edit settings (added in this fork) ----
+    const updateDragRows = enabled => {
+        document.querySelectorAll('.drag-only').forEach(r => r.classList.toggle('hidden', !enabled))
+    }
+
+    const showConnection = s => {
+        const status = document.getElementById('connect_status')
+        if (!s.oauthClientId) status.textContent = 'Paste your API client ID to turn this on. Until then Google\'s own dragging is used.'
+        else if (s.connectedAccount) status.textContent = `Connected as ${s.connectedAccount}.`
+        else status.textContent = 'Not connected yet. Click Connect, or you\'ll be asked to sign in on your first drag.'
+    }
+
+    chrome.storage.local.get(['dragEdit', 'oauthClientId', 'connectedAccount'], s => {
+        const enabled = s.dragEdit !== false
+        setToggle('toggle_drag_edit', enabled)
+        setText('oauth_client_id', s.oauthClientId || '')
+        updateDragRows(enabled)
+        showConnection(s)
+    });
+
+    try {
+        setText('redirect_uri', chrome.identity.getRedirectURL())
+    } catch (e) {}
+
+    document.getElementById('toggle_drag_edit').onchange = function (e) {
+        chrome.storage.local.set({ 'dragEdit': e.target.checked });
+        updateDragRows(e.target.checked)
+    };
+
+    document.getElementById('oauth_client_id').onchange = function (e) {
+        const oauthClientId = e.target.value.trim()
+        chrome.storage.local.set({ oauthClientId }, () => showConnection({ oauthClientId }));
+    };
+
+    document.getElementById('connect_google').onclick = function () {
+        const status = document.getElementById('connect_status')
+        status.textContent = 'Opening Google sign-in…'
+        chrome.storage.local.get(['oauthClientId', 'detectedEmail'], s => {
+            if (!s.oauthClientId) return showConnection(s)
+            // The popup may close while the sign-in window is open; the result is saved either way
+            chrome.runtime.sendMessage({ type: 'calmerge-connect', loginHint: s.detectedEmail }, res => {
+                if (chrome.runtime.lastError) return
+                status.textContent = res && res.ok ? `Connected as ${res.data.account}.` : `Couldn't connect: ${res ? res.error : 'no response'}`
+            });
+        });
+    };
+
     const manifest_data = chrome.runtime.getManifest();
     document.getElementById('version').innerHTML=`V${manifest_data.version}`
 
